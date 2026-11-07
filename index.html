@@ -1816,22 +1816,77 @@ function pixelRing(x, y, r, color, alpha, cell) {
   }
   c.globalAlpha = 1;
 }
-function drawShip(x, y, vx, big, id) {
+/* Every upgrade bolts a hand-coloured part onto the ship. */
+const part = (rows, pal, scale) => [makeRowsSprite(rows, pal, scale || 2), makeRowsSprite(rows, pal, scale || 2)];
+const PARTS = {
+  barrel: part(['a', 'a', 'b', 'b', 'b'], { a: '#4a4438', b: '#8a8270' }, 3),
+  needle: part(['a', 'a', 'a', 'b', 'b'], { a: '#0f86b8', b: '#9fdcf5' }, 3),
+  needleLong: part(['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b'], { a: '#0f86b8', b: '#9fdcf5' }, 3),
+  rail: part(['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b'], { a: '#d0283c', b: '#ffb3a8' }, 3),
+  crown: part(['.a.', 'aba', '.a.'], { a: '#d0283c', b: '#ffd766' }, 3),
+  spark: part(['a.a', '.a.', 'a.a'], { a: '#f2b01e' }, 2),
+  plate: part(['aaaa', 'abba', 'aaaa'], { a: '#5c6b78', b: '#a9bac8' }),
+  drum: part(['aa', 'bb', 'aa', 'bb'], { a: '#c98a00', b: '#f2d675' }),
+  nozzle: part(['aaa', 'bbb', '.b.'], { a: '#8a8270', b: '#4a4438' }),
+  fin: part(['.a.', 'aba', 'aba', 'aba', '.b.'], { a: '#14a79a', b: '#9ff0e4' }),
+  fin2: part(['.a.', 'aba', '.b.'], { a: '#14a79a', b: '#9ff0e4' }),
+  cell: part(['.a.', 'aba', 'aba', '.a.'], { a: '#8a47d1', b: '#e6ccff' }),
+  cellOff: part(['.a.', 'aba', 'aba', '.a.'], { a: '#8a8270', b: '#c9c0a8' }),
+  magnet: part(['b.b', 'a.a', 'a.a', 'aaa'], { a: '#d0283c', b: '#a9bac8' }),
+  clover: part(['.a.a.', 'aaaaa', '.aaa.', '..b..'], { a: '#2fa84f', b: '#14703f' })
+};
+function drawFlame(x, w, len) {
+  const hw = Math.round(w / 8) * 4 || 2;
+  c.fillStyle = '#e8791a'; c.fillRect(x - hw, 0, hw * 2, 4);
+  c.fillStyle = '#f2b01e'; c.fillRect(x - hw / 2, 4, hw, len);
+  c.fillStyle = '#d9381e'; c.fillRect(x - hw / 2, 4 + len, hw / 2, 4); c.fillRect(x, len, hw / 2, 4);
+}
+function drawShip(x, y, vx, big, id, up) {
   c.save();
   c.translate(Math.round(x), Math.round(y));
   const sq = 1 - Math.min(Math.abs(vx) * 0.012, 0.15);
   c.scale(sq * (big || 1), big || 1);
-  const fl = 1 + Math.floor(Math.random() * 3);
-  c.fillStyle = '#e8791a'; c.fillRect(-8, 24, 16, 4);
-  c.fillStyle = '#f2b01e'; c.fillRect(-4, 28, 8, 4 * fl);
-  c.fillStyle = '#d9381e'; c.fillRect(-4, 28 + 4 * fl, 4, 4); c.fillRect(0, 24 + 4 * fl, 4, 4);
-  drawS(SPR_SHIPS[id || (run && run.ship) || 'lancer'][Math.floor(tick / 10) % 2], 0, 0);
-  const pods = !id && stats && run && mode !== 'title';
-  if (pods && stats.guns >= 2) {
-    c.fillStyle = GRAPHITE; c.fillRect(-11, -14, 4, 12); c.fillRect(7, -14, 4, 12);
+  const sid = id || (run && run.ship) || 'lancer';
+  const frames = SPR_SHIPS[sid], ship = frames[0], preview = !!up;
+  if (!up && !id && run && mode !== 'title') up = run.up;
+  const lv = k => (up && up[k]) || 0;
+  const fr = Math.floor(tick / 10) % 2, P = (n, px, py) => drawS(PARTS[n][fr], px, py);
+  const both = (n, px, py) => { P(n, -px, py); P(n, px, py); };
+  const top = -ship.h / 2, bot = ship.h / 2;
+  // Engines first, so they sit behind the hull.
+  const fl = 1 + Math.floor(Math.random() * 3), th = lv('thrusters');
+  c.save(); c.translate(0, bot);
+  drawFlame(0, 16 + (th >= 3 ? 8 : 0), 4 * fl + th * 3);
+  if (th >= 1) { drawFlame(-12, 8, 2 * fl + 4); drawFlame(12, 8, 2 * fl + 4); }
+  if (th >= 2) { drawFlame(-20, 8, 2 * fl + 2); drawFlame(20, 8, 2 * fl + 2); }
+  c.restore();
+  if (th >= 1) both('nozzle', 12, bot - 2);
+  if (th >= 2) both('nozzle', 20, bot - 4);
+  for (let i = 0; i < lv('novacell'); i++) {
+    const lit = preview || !run || run.nova > i;
+    const px = i === 0 ? 8 : 16;
+    P(lit ? 'cell' : 'cellOff', -px, bot + 2); P(lit ? 'cell' : 'cellOff', px, bot + 2);
   }
-  if (pods && stats.guns >= 3) {
-    c.fillStyle = '#c98a00'; c.fillRect(-18, -6, 4, 12); c.fillRect(14, -6, 4, 12);
+  // Things that stick out past the outline.
+  if (lv('guns') >= 2) both('barrel', 16, -2);
+  if (lv('guns') >= 1) both('barrel', 9, top + 12);
+  if (lv('pierce') >= 1) P(lv('guns') ? 'rail' : lv('pierce') >= 2 ? 'needleLong' : 'needle', 0, top - (lv('guns') || lv('pierce') >= 2 ? 10 : 6));
+  if (lv('aegis') >= 1) both('fin', 26, 8);
+  if (lv('aegis') >= 2) both('fin2', 32, 12);
+  drawS(frames[fr], 0, 0);
+  // Things bolted on top of the hull.
+  if (lv('hull') >= 1) both('plate', 15, 10);
+  if (lv('hull') >= 2) both('plate', 7, 15);
+  if (lv('hull') >= 3) both('plate', 20, 15);
+  for (let i = 0; i < lv('loader'); i++) both('drum', 6, -6 + i * 9);
+  if (lv('magnet')) P('magnet', 0, 7);
+  if (lv('lucky') >= 1) P('clover', -22, -2);
+  if (lv('lucky') >= 2) P('clover', 22, -2);
+  if (lv('overcharge') >= 1) P('crown', 0, top + 8);
+  if (lv('overcharge') >= 2 && Math.floor(tick / 6) % 2) both('spark', 7, top + 4);
+  if (preview) {
+    const wing = lv('wingman') + SHIPS[sid].wingman;
+    [-52, 52, -92].slice(0, wing).forEach(dx => drawS(SPR_WING, dx, 8));
   }
   c.restore();
 }
@@ -2206,6 +2261,11 @@ function drawUpgrade() {
     const combo = id !== 'repair' && comboFrom(id);
     if (combo) T('UNLOCKS COMBO: ' + combo.name, b.x + 92 + u.max * 20 + 8, b.y + 89, 11, '#d61f6b', 'left');
   });
+  // Try-on preview: the ship as it would look with the highlighted upgrade.
+  const pick = ui[focus] && ui[focus].upgrade, tryOn = Object.assign({}, run.up);
+  if (pick && pick !== 'repair') tryOn[pick] = (tryOn[pick] || 0) + 1;
+  T('Your ship with this upgrade', W / 2, 606, 13, '#4a4438');
+  drawShip(W / 2, 668, 0, 1.8, run.ship, tryOn);
 }
 function drawGameOver() {
   drawWorld(); dim(0.88);
@@ -2238,6 +2298,7 @@ function drawPause() {
   const names = COMBOS.filter(k => stats.combos[k.id]).map(k => k.name);
   T('Ship: ' + shipDef().name + '  -  ' + diff().name, W / 2, 560, 13, '#4a4438');
   if (names.length) T('Combos: ' + names.join(', '), W / 2, 584, 13, '#d61f6b');
+  drawShip(W / 2, 660, 0, 1.6, run.ship, run.up);
 }
 function render() {
   c.setTransform(renderScale, 0, 0, renderScale, 0, 0);
