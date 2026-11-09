@@ -50,11 +50,13 @@ resize();
 
 /* ==================== Save data ==================== */
 const SAVE_KEY = 'hivebreak_v1';
-const save = { unlocked: 1, hi: 0, stars: {}, run: null, music: true, sfx: true, shake: true, ship: 'lancer', difficulty: 'normal', autofire: false, hiEndless: 0, bestWave: 0, tutorialDone: false, notesSeen: {} };
+const save = { unlocked: 1, hi: 0, stars: {}, run: null, music: true, sfx: true, shake: true, ship: 'lancer', difficulty: 'normal', autofire: false, hiEndless: 0, bestWave: 0, tutorialDone: false, notesSeen: {}, scoreV2: false, tint: 'blue', pencils: 0, perks: {}, prestiges: 0, endlessRun: null, tutorialCleared: false };
 try {
   const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
   if (raw && typeof raw === 'object') Object.assign(save, raw);
 } catch (e) { /* private mode or corrupt data: play with defaults */ }
+// Old best scores used the former points system and can't be compared.
+if (!save.scoreV2) { save.hiEndless = 0; save.scoreV2 = true; }
 if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches && !localStorage.getItem(SAVE_KEY)) save.shake = false;
 function persist() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* non-fatal */ }
@@ -141,7 +143,7 @@ function sfx(name) {
 const CHORDS = [0, 0, -4, -2], BASS = [0, 0, 12, 0, 0, 7, 0, 10], ARP = [0, 7, 12, 15, 19, 15, 12, 7];
 function musicTick() {
   if (!A.ctx || A.ctx.state !== 'running') return;
-  if (!save.music || mode === 'pause' || mode === 'gameover') { A.next = 0; return; }
+  if (!save.music || mode === 'pause' || mode === 'settings' || mode === 'confirm' || mode === 'gameover') { A.next = 0; return; }
   const inGame = mode === 'play';
   const bossy = inGame && boss;
   const bpm = bossy ? 158 : inGame ? 128 + run.stage : 96;
@@ -294,6 +296,7 @@ const PAL = {
   p: { a: '#8a47d1', b: '#56239e', c: '#d9baf5' },
   h: { a: '#14a79a', b: '#0b6f6a', c: '#fdfbf2' },
   m: { a: '#e2542e', b: '#a32d18', c: '#ffc89a' },
+  g: { a: '#3a342b', b: '#7a2f8f', c: '#d9baf5' },
   moth: { a: '#e3b21a', b: '#a8740c', c: '#fff0a8' },
   ship: { a: '#2f7fd6', b: '#1f3f8f', c: '#9fdcf5', d: '#e8791a' }
 };
@@ -310,20 +313,36 @@ const SPR = {
       makeSprite(['..aaa.', '.aabb.', 'aabbbc', 'aabcbc', '.abbbc', 'aabcbc', 'aabbbc', '.aabb.', '..aaa.'], PAL.p, 4)],
   h: [makeSprite(['....aa', '..aaab', '.aabbc', '.abbcc', 'aabccc', '.abbcc', '.aabbc', '..aaab', '....aa'], PAL.h, 4),
       makeSprite(['...aaa', '.aaabb', '.abbbc', 'aabbcc', 'aabccc', 'aabbcc', '.abbbc', '.aaabb', '...aaa'], PAL.h, 4)],
+  g: [makeSprite(['a.b', '.bc', 'a.b'], PAL.g, 3), makeSprite(['.ab', 'a.c', '..b'], PAL.g, 3)],
   m: [makeSprite(['a..b', '.abb', 'abcc', '.abb', '...b'], PAL.m, 4),
       makeSprite(['.a.b', '.abb', '.bcc', 'aabb', '...b'], PAL.m, 4)]
 };
 const SPR_MOTH = [makeSprite(['aa....bb', 'aaa..bbb', 'aaaabbcc', '.aaabbbc', '...a.bbb', '......b.'], PAL.moth, 4),
                   makeSprite(['........', 'aaa..bbb', 'aaaabbcc', 'aaaabbbc', 'aa.a.bbb', '......b.'], PAL.moth, 4)];
 const SHIP_ROWS = ['.....a', '.....a', '....ab', '....ac', '...abc', '...abc', 'b..abb', 'aa.abb', 'aaaabb', 'aabaab', 'a..aaa', '....dd'];
-const shipFrames = (rows, pal) => [makeSprite(rows, pal, 4), makeSprite(rows, pal, 4)];
-const SPR_SHIPS = {
-  lancer: shipFrames(SHIP_ROWS, PAL.ship),
-  dart: shipFrames(['.....a', '.....a', '.....a', '....ab', '....ac', '....ac', '...abb', '..a.ab', '.a..ab', 'a...bb', '....dd'], { a: '#e2542e', b: '#a32d18', c: '#ffd9a8', d: '#f2b01e' }),
-  anvil: shipFrames(['.....a', '...aaa', '..abbb', '.aabcc', 'aabbcc', 'aabbbb', 'aaaabb', 'aa.aab', 'a..aab', '....dd'], { a: '#2fa84f', b: '#14703f', c: '#c9eeb0', d: '#e8791a' }),
-  kestrel: shipFrames(['.....a', '....ab', '....ac', 'a...ac', 'aa.abb', '.aaabb', '..aabb', '...abb', '...a.b', '....dd'], { a: '#8a47d1', b: '#56239e', c: '#d9baf5', d: '#e8791a' })
+const LOOKS = {
+  lancer: SHIP_ROWS,
+  dart: ['.....a', '.....a', '.....a', '....ab', '....ac', '....ac', '...abb', '..a.ab', '.a..ab', 'a...bb', '....dd'],
+  anvil: ['.....a', '...aaa', '..abbb', '.aabcc', 'aabbcc', 'aabbbb', 'aaaabb', 'aa.aab', 'a..aab', '....dd'],
+  kestrel: ['.....a', '....ab', '....ac', 'a...ac', 'aa.abb', '.aaabb', '..aabb', '...abb', '...a.b', '....dd']
 };
-const SPR_WING = makeSprite(['..a', '.ab', 'abc', 'a.b'], PAL.ship, 4);
+const COLORS = { blue: '#2f7fd6', red: '#e2542e', green: '#2fa84f', purple: '#8a47d1', orange: '#e8791a', pink: '#d61f6b', teal: '#14a79a', gold: '#d9a400' };
+function darken(col, t) {
+  const m = i => Math.round(parseInt(col.substr(i, 2), 16) * (1 - t)).toString(16).padStart(2, '0');
+  return '#' + m(1) + m(3) + m(5);
+}
+const tintPal = t => { const col = COLORS[t] || COLORS.blue; return { a: col, b: darken(col, 0.42), c: lighten(col, 0.62), d: t === 'orange' ? '#d9381e' : '#e8791a' }; };
+const shipCache = {};
+function shipSprites(look, tint) {
+  const k = look + '/' + tint;
+  if (!shipCache[k]) shipCache[k] = [makeSprite(LOOKS[look] || LOOKS.lancer, tintPal(tint), 4), makeSprite(LOOKS[look] || LOOKS.lancer, tintPal(tint), 4)];
+  return shipCache[k];
+}
+function wingSprite(tint) {
+  const k = 'wing/' + tint;
+  if (!shipCache[k]) shipCache[k] = makeSprite(['..a', '.ab', 'abc', 'a.b'], tintPal(tint), 4);
+  return shipCache[k];
+}
 const SPR_NODE = makeSprite(['..a', '.ab', 'abc', '.ab', '..a'], { a: '#2b6fc2', b: '#6ec3ea', c: '#e0327f' }, 4);
 const BOSS_DEFS = {
   5: { kind: 'brood', name: 'BROOD MOTHER', hp: 110, scale: 6, color: '#d9681a',
@@ -342,13 +361,14 @@ const BOSS_DEFS = {
 
 /* ==================== Game data ==================== */
 const TYPES = {
-  d: { name: 'Mite', hp: 1, pts: 10, info: 'Fires straight down.' },
-  s: { name: 'Wasp', hp: 1, pts: 25, info: 'Aims right at you.' },
-  a: { name: 'Shellback', hp: 3, pts: 35, info: 'Heavy armor. Soaks up shots.' },
-  v: { name: 'Darter', hp: 1, pts: 30, info: 'Peels off and dives at you.' },
-  p: { name: 'Splitter', hp: 2, pts: 30, info: 'Bursts into two chasers.' },
-  h: { name: 'Mender', hp: 2, pts: 50, info: 'Repairs nearby allies. Kill first!' },
-  m: { name: 'Chaser', hp: 1, pts: 10, info: '' }
+  d: { name: 'Mite', hp: 1, info: 'Fires straight down.' },
+  s: { name: 'Wasp', hp: 1, info: 'Aims right at you.' },
+  a: { name: 'Shellback', hp: 3, info: 'Heavy armor. Soaks up shots.' },
+  v: { name: 'Darter', hp: 1, info: 'Peels off and dives at you.' },
+  p: { name: 'Splitter', hp: 2, info: 'Bursts into two chasers.' },
+  h: { name: 'Mender', hp: 2, info: 'Repairs nearby allies. Kill first!' },
+  m: { name: 'Chaser', hp: 1, info: '' },
+  g: { name: 'Gnat', hp: 1, info: '' }
 };
 const STAGES = [null,
   { name: 'First Contact', rows: ['..dddddd..', '.dddddddd.'] },
@@ -385,23 +405,41 @@ const MODS = {
   wind: { name: 'GUSTY PAGE', desc: 'Every shot drifts on the wind' },
   eraser: { name: 'RUNAWAY ERASER', desc: 'It wipes out every shot it touches' }
 };
-const SHIPS = {
-  lancer: { name: 'Lancer', lines: ['Balanced all-rounder', '3 lives'], lives: 3, speed: 1, cd: 1, wingman: 0, shield: false },
-  dart: { name: 'Dart', lines: ['Fast but fragile', '2 lives, quick shots'], lives: 2, speed: 1.3, cd: 0.86, wingman: 0, shield: false },
-  anvil: { name: 'Anvil', lines: ['Slow, heavy armor', '5 lives + a shield'], lives: 5, speed: 0.8, cd: 1.15, wingman: 0, shield: true },
-  kestrel: { name: 'Kestrel', lines: ['Starts with wingman', '3 lives, slower guns'], lives: 3, speed: 1, cd: 1.15, wingman: 1, shield: false }
+const SHIPS = { lancer: { name: 'Lancer' }, dart: { name: 'Dart' }, anvil: { name: 'Anvil' }, kestrel: { name: 'Kestrel' } };
+const BASE_SHIP = { lives: 3, speed: 1, cd: 1, wingman: 0, shield: false };
+const TUTORIAL_LEN = 5;
+const PERKS = {
+  thick: { name: 'Thick Hull', desc: '+1 starting life', max: 5, cost: l => 8 * (l + 1) },
+  head: { name: 'Head Start', desc: '+1 free upgrade at the start of a run', max: 5, cost: l => 12 * (l + 1) },
+  sharp: { name: 'Sharper Point', desc: 'Fire 4% faster', max: 8, cost: l => 6 * (l + 1) },
+  spare: { name: 'Spare Nova', desc: '+1 starting Nova', max: 3, cost: l => 15 * (l + 1) },
+  luck: { name: 'Lucky Sharpener', desc: 'Enemies drop pickups more often', max: 5, cost: l => 6 * (l + 1) },
+  star: { name: 'Gold Star', desc: '+10% Golden Pencils', max: 10, cost: l => 5 * (l + 1) },
+  goldpaint: { name: 'Gold Paint', desc: 'Unlocks the gold ship colour', max: 1, cost: () => 25 }
 };
+const perkLv = k => run && run.endless ? (save.perks[k] || 0) : 0;
+function pencilsFor(wave, prestige) {
+  if (wave < 3) return 0;
+  const base = Math.max(1, Math.floor(Math.pow(wave, 1.3) / 3));
+  return Math.round(base * (1 + save.prestiges * 0.1) * (prestige ? 1 : 0.5) * diff().score * (1 + perkLv('star') * 0.1)) || 1;
+}
+const TUNE = { stEarly: 0.3, stSlope: 0.07, earlyBoss: { 5: 0.6, 10: 0.35, 15: 0.3, 20: 0.2 }, bossSlow: 1.3, tierEvery: 15, ramp: 1.005, rampLate: 1.01, bossK: 0.015, early: 0.01 };
+const hpTier = n => 1 + Math.floor((n - 1) / TUNE.tierEvery);
+const endlessRamp = n => n <= 20 ? 1 : Math.pow(TUNE.ramp, n - 20) * (n > 100 ? Math.pow(TUNE.rampLate, n - 100) : 1);
+// Early waves toughen quickly, then this eases off as the long-term ramp takes over.
+const earlyHp = n => n <= 20 ? 1 + n * TUNE.early : Math.max(1, 1 + 20 * TUNE.early - (n - 20) * 0.0075);
+const bossRamp = n => n <= 20 ? 1 : Math.pow(TUNE.ramp, n - 20) * (1 + (n - 20) * TUNE.bossK);
 const DIFFS = {
-  easy: { name: 'Easy', lives: 1, fire: 1.4, bullet: 0.85, hp: 0.8, score: 0.75, desc: '+1 life, slower shots. Score x0.75' },
-  normal: { name: 'Normal', lives: 0, fire: 1, bullet: 1, hp: 1, score: 1, desc: 'The game as designed. Score x1' },
-  hard: { name: 'Hard', lives: -1, fire: 0.72, bullet: 1.15, hp: 1.25, score: 1.5, desc: '-1 life, faster and tougher. Score x1.5' }
+  easy: { name: 'Easy', lives: 1, fire: 1.4, bullet: 0.85, hp: 0.8, score: 0.75, desc: '+1 life, slower shots. Pencils x0.75' },
+  normal: { name: 'Normal', lives: 0, fire: 1, bullet: 1, hp: 1, score: 1, desc: 'The game as designed. Pencils x1' },
+  hard: { name: 'Hard', lives: -1, fire: 0.72, bullet: 1.15, hp: 1.25, score: 1.5, desc: '-1 life, faster and tougher. Pencils x1.5' }
 };
 const COMBOS = [
   { id: 'rail', name: 'Rail Shot', req: ['pierce', 'guns'], desc: 'Every 4th volley fires a piercing rail' },
   { id: 'storm', name: 'Drone Storm', req: ['loader', 'wingman'], desc: 'Wingmen fire on every shot' },
   { id: 'backlash', name: 'Backlash', req: ['aegis', 'thrusters'], desc: 'A broken shield lashes out with shots' },
   { id: 'supernova', name: 'Supernova', req: ['novacell', 'overcharge'], desc: 'Nova hits twice as hard and drops loot' },
-  { id: 'salvage', name: 'Salvage', req: ['magnet', 'lucky'], desc: 'Power-ups last longer, gems pay double' }
+  { id: 'salvage', name: 'Salvage', req: ['magnet', 'lucky'], desc: 'Power-ups last much longer' }
 ];
 const WAVE_NAMES = ['Another Page', 'Fresh Ink', 'Margin Raid', 'Dog-Eared', 'Scribble Swarm', 'Smudged', 'Bleed Through', 'Graphite Storm', 'Wobbly Lines', 'Blank Stare'];
 let endlessCache = {};
@@ -430,6 +468,9 @@ function endlessDef(n) {
       rows.push(row);
     }
     def = { name: pick(WAVE_NAMES), rows };
+    // Half the time, reuse one of the hand-built formations from the old campaign.
+    const built = STAGES.filter((d, k) => d && d.rows && k <= n + 2);
+    if (Math.random() < 0.5 && built.length) def.rows = pick(built).rows;
     if (n >= 6 && Math.random() < 0.3) def.mod = pick(Object.keys(MODS));
   }
   return (endlessCache[n] = def);
@@ -437,29 +478,34 @@ function endlessDef(n) {
 const stageDef = n => run && run.endless ? endlessDef(n) : STAGES[n];
 const stageLabel = n => (run && run.endless ? 'Wave ' : 'Stage ') + n;
 const diff = () => DIFFS[(run && run.difficulty) || 'normal'];
-const shipDef = () => SHIPS[(run && run.ship) || 'lancer'];
+const shipDef = () => BASE_SHIP;
 const UPGRADES = {
-  guns:       { name: 'Extra Cannon', icon: 'W', max: 2, desc: l => l === 0 ? 'Twin cannons.' : 'Triple cannons with a wide spread.' },
-  loader:     { name: 'Rapid Loader', icon: 'F', max: 3, desc: () => 'Fire 18% faster.' },
-  thrusters:  { name: 'Thrusters', icon: 'T', max: 3, desc: () => 'Move 15% faster.' },
-  overcharge: { name: 'Overcharge', icon: 'D', max: 2, desc: () => '+1 damage on every main shot.' },
-  pierce:     { name: 'Piercing Rounds', icon: 'P', max: 2, desc: () => 'Shots pass through one more enemy.' },
-  wingman:    { name: 'Wingman', icon: 'M', max: 2, desc: () => 'A small drone flies and fires beside you.' },
-  hull:       { name: 'Reinforced Hull', icon: 'H', max: 3, desc: () => '+1 max life, and repairs one.' },
-  aegis:      { name: 'Aegis Shield', icon: 'A', max: 2, desc: l => l === 0 ? 'Absorbs a hit. Recharges in 25s.' : 'Shield recharges in 15s.' },
-  novacell:   { name: 'Nova Cell', icon: 'N', max: 2, desc: () => '+1 nova capacity, and refills it.' },
+  zapper:     { name: 'Zapper Antenna', icon: 'Z', max: 15, unlock: 20, auto: true, desc: () => 'Automatically zaps enemy shots near you.' },
+  missile:    { name: 'Homing Missiles', icon: 'H', max: 20, unlock: 30, auto: true, desc: () => 'Fires missiles that hunt enemies by themselves.' },
+  turret:     { name: 'Auto Turret', icon: 'U', max: 20, unlock: 45, auto: true, desc: () => 'A turret aims and fires on its own.' },
+  arc:        { name: 'Chain Lightning', icon: 'C', max: 20, unlock: 60, auto: true, desc: () => 'Kills arc lightning to nearby enemies.' },
+  orbit:      { name: 'Orbit Blades', icon: 'O', max: 20, unlock: 80, auto: true, desc: () => 'Spinning blades shred enemies and shots.' },
+  reactor:    { name: 'Nova Reactor', icon: 'R', max: 8, unlock: 100, auto: true, desc: () => 'Slowly recharges your Nova by itself.' },
+  medic:      { name: 'Repair Bot', icon: '+', max: 8, unlock: 120, auto: true, desc: () => 'Slowly repairs lost lives by itself.' },
+  guns:       { name: 'Extra Cannon', icon: 'W', max: 3, desc: l => l === 0 ? 'Twin cannons.' : l === 1 ? 'Triple cannons with a wide spread.' : 'Four cannons. The maximum!' },
+  loader:     { name: 'Rapid Loader', icon: 'F', max: 18, desc: () => 'Fire 18% faster.' },
+  thrusters:  { name: 'Thrusters', icon: 'T', max: 12, desc: () => 'Move 15% faster.' },
+  overcharge: { name: 'Overcharge', icon: 'D', max: Infinity, desc: () => '+1 damage on every main shot.' },
+  pierce:     { name: 'Piercing Rounds', icon: 'P', max: 6, desc: () => 'Shots pass through one more enemy.' },
+  wingman:    { name: 'Wingman', icon: 'M', max: 3, desc: () => 'A small drone flies and fires beside you.' },
+  hull:       { name: 'Reinforced Hull', icon: 'H', max: Infinity, desc: () => '+1 max life, and repairs one.' },
+  aegis:      { name: 'Aegis Shield', icon: 'A', max: 5, desc: l => l === 0 ? 'Absorbs a hit. Recharges in 25s.' : 'Shield recharges faster.' },
+  novacell:   { name: 'Nova Cell', icon: 'N', max: Infinity, desc: () => '+1 nova capacity, and refills it.' },
   magnet:     { name: 'Tractor Beam', icon: 'B', max: 1, desc: () => 'Pulls pickups toward your ship.' },
-  lucky:      { name: 'Scavenger', icon: 'L', max: 2, desc: () => 'Enemies drop pickups more often.' }
+  lucky:      { name: 'Scavenger', icon: 'L', max: 10, desc: () => 'Enemies drop pickups more often.' }
 };
-const CATCHUP = ['guns', 'loader', 'hull', 'thrusters', 'guns', 'overcharge', 'aegis', 'wingman', 'loader', 'novacell', 'pierce', 'wingman', 'overcharge'];
 const PICKUPS = {
   spread: { label: 'S', color: '#ffe066', name: 'SPREAD SHOT', w: 3 },
   rapid:  { label: 'R', color: '#ff7ab8', name: 'RAPID FIRE', w: 3 },
   lance:  { label: 'P', color: '#7df9ff', name: 'PIERCING', w: 2 },
   shield: { label: 'A', color: '#8fb8ff', name: 'SHIELD UP', w: 2 },
   nova:   { label: 'N', color: '#d59bff', name: '+1 NOVA', w: 1.5 },
-  life:   { label: '+', color: '#7dff9a', name: '+1 LIFE', w: 0.8 },
-  gem:    { label: '$', color: '#ffb347', name: 'BONUS', w: 3 }
+  life:   { label: '+', color: '#7dff9a', name: '+1 LIFE', w: 0.8 }
 };
 
 /* ==================== Game state ==================== */
@@ -473,6 +519,7 @@ let shake = 0, flash = 0, flashColor = '#fff', freeze = 0, slow = 0;
 let shownScore = 0, usedTouch = false, summary = null, upgradeChoices = [], breachFlash = 0;
 let wrecks = [], flip = null, bannerNext = null, curMod = null, eraser = null, stageT = 0;
 let note = null, noteQueue = [];
+let swarmLeft = 0, swarmT = 0, zaps = [], arcing = false, autoT = {};
 const mess = document.createElement('canvas');
 mess.width = W; mess.height = H;
 const messX = mess.getContext('2d');
@@ -492,28 +539,38 @@ const keys = {};
 const ptr = { x: W / 2, y: H / 2, down: false, offset: 0, touch: false };
 
 function newRun(stage, ranked, endless) {
-  const ship = SHIPS[save.ship] ? save.ship : 'lancer', dk = DIFFS[save.difficulty] ? save.difficulty : 'normal';
-  const lives = Math.max(1, SHIPS[ship].lives + DIFFS[dk].lives);
+  const dk = DIFFS[save.difficulty] ? save.difficulty : 'normal';
+  const extra = endless ? (save.perks.thick || 0) : 0, nova = 1 + (endless ? (save.perks.spare || 0) : 0);
+  const lives = Math.max(1, BASE_SHIP.lives + DIFFS[dk].lives + extra);
   endlessCache = {};
-  run = { stage, score: 0, lives, maxLives: lives, nova: 1, novaMax: 1, up: {}, combo: 0, comboT: 0, ranked, timers: {}, ship, difficulty: dk, endless: !!endless };
+  run = { stage, score: 0, lives, maxLives: lives, nova, novaMax: nova, up: {}, combo: 0, comboT: 0, ranked, timers: {}, ship: SHIPS[save.ship] ? save.ship : 'lancer', tint: COLORS[save.tint] ? save.tint : 'blue', difficulty: dk, endless: !!endless };
   recalcStats();
+  if (endless) for (let i = 0; i < (save.perks.head || 0); i++) applyUpgrade(pick(['guns', 'overcharge', 'loader', 'hull', 'thrusters', 'aegis', 'wingman', 'lucky'].filter(k => (run.up[k] || 0) < UPGRADES[k].max)));
 }
 function restoreRun(snap, retry) {
   run = JSON.parse(JSON.stringify(snap));
   run.combo = 0; run.comboT = 0; run.timers = {};
-  run.ship = run.ship || 'lancer'; run.difficulty = run.difficulty || 'normal';
+  run.ship = run.ship || 'lancer'; run.tint = run.tint || 'blue'; run.difficulty = run.difficulty || 'normal';
   if (retry) { run.lives = run.maxLives; run.score = 0; run.ranked = false; run.nova = Math.max(run.nova, 1); }
   recalcStats();
 }
 function recalcStats() {
   const u = run.up, lv = k => u[k] || 0, ship = shipDef();
+  // Early levels are big jumps; after that every level still helps, by less.
+  const gl = lv('guns'), ol = lv('overcharge'), ll = lv('loader'), tl = lv('thrusters'), al = lv('aegis'), wl = lv('wingman');
   stats = {
-    speed: 5.2 * Math.pow(1.15, lv('thrusters')) * ship.speed,
-    cd: 15 * Math.pow(0.82, lv('loader')) * ship.cd,
-    guns: 1 + lv('guns'), dmg: 1 + lv('overcharge'), pierce: lv('pierce'),
-    wingmen: lv('wingman') + ship.wingman, magnet: lv('magnet'), luck: lv('lucky'),
-    shieldCd: lv('aegis') === 2 ? 900 : lv('aegis') === 1 ? 1500 : ship.shield ? 1800 : 0,
-    combos: {}
+    speed: Math.min(11, 5.2 * Math.pow(1.15, Math.min(tl, 3)) * Math.pow(1.03, Math.max(0, tl - 3))),
+    cd: Math.max(4, 15 * Math.pow(0.82, Math.min(ll, 3)) * Math.pow(0.955, Math.max(0, ll - 3)) * Math.pow(0.96, perkLv('sharp'))),
+    guns: 1 + Math.min(gl, 3),
+    dmg: 1 + Math.min(ol, 2) + Math.max(0, ol - 2) * 0.6,
+    pierce: Math.min(lv('pierce'), 6),
+    wingmen: Math.min(wl + ship.wingman, 3), wingDmg: 1,
+    magnet: lv('magnet'), luck: lv('lucky'),
+    shieldCd: al >= 1 ? Math.max(240, 1500 * Math.pow(0.6, al - 1)) : ship.shield ? 1800 : 0,
+    combos: {},
+    zapper: lv('zapper'), missile: lv('missile'), turret: lv('turret'), arc: Math.min(lv('arc'), 8), orbit: Math.min(lv('orbit'), 6), reactor: lv('reactor'), medic: lv('medic'),
+    // Past their early levels, automatic weapons keep gaining damage.
+    missileX: 1 + Math.max(0, lv('missile') - 6) * 0.25, turretX: 1 + Math.max(0, lv('turret') - 5) * 0.25, arcX: 1 + Math.max(0, lv('arc') - 5) * 0.25, orbitX: 1 + Math.max(0, lv('orbit') - 4) * 0.25
   };
   COMBOS.forEach(k => { if (comboMet(k)) stats.combos[k.id] = true; });
 }
@@ -532,8 +589,6 @@ function applyUpgrade(id) {
   recalcStats();
   if (id === 'aegis' && player) player.shield = true;
 }
-const upgradesBefore = s => { let n = 0; for (let i = 1; i < s; i++) if (i % 2 === 0 || i % 5 === 0) n++; return n; };
-
 function buildBarriers() {
   barriers = [];
   const shape = ['..XXXX..', '.XXXXXX.', 'XXXXXXXX', 'XXX..XXX'];
@@ -555,7 +610,7 @@ function startStage(stage) {
   delete snap.timers;
   delete snap.snap;
   run.snap = snap;
-  if (!run.endless) save.run = snap;
+  if (run.endless) save.endlessRun = snap;
   persist();
   const old = player;
   player = {
@@ -565,7 +620,8 @@ function startStage(stage) {
   enemies = []; pBullets = []; eBullets = []; lasers = []; pickups = []; boss = null; moth = null;
   particles = []; rings = []; floaters = [];
   buildBarriers();
-  wrecks = []; note = null; noteQueue = []; stageT = 0; eraser = null;
+  wrecks = []; note = null; noteQueue = []; stageT = 0; eraser = null; zaps = []; autoT = {};
+  swarmLeft = run.endless ? Math.min(160, Math.max(0, Math.round((stage - 29) * 1.2))) : 0; swarmT = 220;
   messX.clearRect(0, 0, W, H);
   stageEnd = 0; fireT = 150; mothT = rand(500, 800); shake = 0; flash = 0; freeze = 0; slow = 0;
   summary = { hits: 0, shots: 0, landed: 0, kills: 0 };
@@ -575,11 +631,13 @@ function startStage(stage) {
   form = null;
   if (def.boss) {
     const d = BOSS_DEFS[def.boss];
-    const bossHp = Math.round(d.hp * diff().hp * (run.endless ? 1 + (stage - 1) * 0.06 + Math.max(0, stage - 20) * 0.35 : 1));
+    const bossHp = Math.round(d.hp * diff().hp * (run.endless ? bossRamp(stage) * (TUNE.earlyBoss[stage] || 1) : 1));
     boss = { kind: d.kind, name: d.name, def: d, spr: d.spr, x: W / 2, y: -80, ty: 170, w: d.spr.w, h: d.spr.h,
       hp: bossHp, maxHp: bossHp, dir: 1, speed: 1.3, t: 0, entering: true, dying: 0, flash: 0, hold: 0, phase: 1, spin: 0, nodes: [] };
     if (d.kind === 'warden') spawnNodes(10);
     banner = { text: 'WARNING', sub: d.name, t: 150, color: '#ff4d6a', max: 150 };
+    // A small repair before every Endless boss, shown when it happens.
+    if (run.endless && run.lives < run.maxLives) { run.lives = Math.min(run.maxLives, run.lives + 2); floaters.push({ x: W / 2, y: 560, str: 'HULL PATCHED', color: '#14703f', size: 16, t: 120 }); }
     sfx('alarm'); setTimeout(() => sfx('alarm'), 700); setTimeout(() => sfx('alarm'), 1400);
   } else {
     form = { x: (W - 9 * 52) / 2, y: 78, dir: 1, drop: 0 };
@@ -593,12 +651,16 @@ function startStage(stage) {
     const m = curMod && MODS[curMod], bt = m ? 170 : 110;
     banner = { text: stageLabel(stage), sub: m ? m.name + ': ' + m.desc : def.name, t: bt, color: m ? '#b8421c' : SECTORS[sectorOf(stage)].line, max: bt };
   }
+  if (run.endless) {
+    const news = { 20: 'Zapper Antenna unlocked', 30: 'Gnat swarms join the attack', 45: 'Auto Turret unlocked', 60: 'Chain Lightning unlocked', 80: 'Orbit Blades unlocked', 100: 'Nova Reactor unlocked. The swarm thickens', 120: 'Repair Bot unlocked', 150: 'The swarm is at full strength', 200: 'It never ends' };
+    if (news[stage] && !bannerNext) bannerNext = { text: 'WAVE ' + stage, sub: news[stage], t: 130, color: '#7a2f8f', max: 130 };
+  }
   setMode('play');
 }
 const sectorOf = s => Math.floor((s - 1) / 5) % 4;
 function makeEnemy(t, o) {
   // Each sector toughens the swarm so it keeps pace with the ship's upgrades.
-  const d = TYPES[t], s = SPR[t][0], hp = Math.max(1, Math.round(d.hp * (1 + Math.floor((run.stage - 1) / 5) + (run.endless ? Math.max(0, run.stage - 20) * 0.35 : 0)) * diff().hp));
+  const d = TYPES[t], s = SPR[t][0], hp = Math.max(1, Math.round(d.hp * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) * earlyHp(run.stage) : 1) * diff().hp));
   return Object.assign({ type: t, hp, maxHp: hp, x: o.sx || 0, y: o.sy || 0, w: s.w, h: s.h, flash: 0, dead: false, cool: rand(120, 420), phase: Math.random() * TAU }, o);
 }
 
@@ -621,8 +683,6 @@ const fxAdd = {
 };
 function addShake(v) { if (save.shake) shake = Math.min(18, shake + v); }
 function doFlash(a, col) { flash = Math.max(flash, a); flashColor = col || '#fff'; }
-const mult = () => Math.min(8, 1 + Math.floor(run.combo / 6));
-function addScore(n) { run.score += Math.round(n * diff().score); }
 
 function fire() {
   const t = run.timers, s = stats, x = player.x, y = player.y - 26;
@@ -633,8 +693,9 @@ function fire() {
   };
   if (s.guns === 1) shot(0, 0);
   else if (s.guns === 2) { shot(-9, 0); shot(9, 0); }
-  else { shot(0, 0); shot(-12, -0.07); shot(12, 0.07); }
-  if (t.spread > 0) { shot(-8, -0.26, 1, '#ffe066'); shot(8, 0.26, 1, '#ffe066'); }
+  else if (s.guns === 3) { shot(0, 0); shot(-12, -0.07); shot(12, 0.07); }
+  else { shot(-5, 0); shot(5, 0); shot(-15, -0.07); shot(15, 0.07); }
+  if (t.spread > 0) { const sd = Math.max(1, s.dmg * 0.5); shot(-8, -0.26, sd, '#ffe066'); shot(8, 0.26, sd, '#ffe066'); }
   player.shot++;
   if (s.combos.rail && player.shot % 4 === 0) {
     pBullets.push({ x, y, vx: 0, vy: -16, dmg: s.dmg * 2, pierce: 99, hits: [], counted: false, color: '#d0283c' });
@@ -643,7 +704,7 @@ function fire() {
   if (s.wingmen && (s.combos.storm || player.shot % 2 === 0)) {
     const oy = PLAYER_Y - 18 + 8;
     [-46, 46, -84].slice(0, s.wingmen).forEach(dx => {
-      pBullets.push({ x: x + dx, y: oy, vx: 0, vy: -10, dmg: 1, pierce: 0, hits: null, counted: false, color: '#9fe8ff' });
+      pBullets.push({ x: x + dx, y: oy, vx: 0, vy: -10, dmg: Math.max(1, s.dmg * 0.5) * s.wingDmg, pierce: 0, hits: null, counted: false, color: '#9fe8ff' });
       summary.shots++;
     });
   }
@@ -662,7 +723,7 @@ function useNova() {
   eBullets = [];
   lasers = [];
   const nm = stats.combos.supernova ? 2 : 1;
-  enemies.forEach(e => { if (!e.dead) damageEnemy(e, 4 * nm * (1 + Math.floor((run.stage - 1) / 5))); });
+  enemies.forEach(e => { if (!e.dead) damageEnemy(e, 4 * nm * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) : 1)); });
   if (stats.combos.supernova) dropPickup(player.x, 300);
   if (moth) { moth.hp = 0; killMoth(); }
   if (boss && !boss.entering && !boss.dying) {
@@ -713,23 +774,28 @@ function damageEnemy(e, dmg) {
 }
 function killEnemy(e) {
   e.dead = true;
-  const color = PAL[e.type].a, m = mult();
+  if (stats.arc && !arcing) {
+    arcing = true;
+    enemies.filter(o => !o.dead && o.state !== 'enter' && Math.hypot(o.x - e.x, o.y - e.y) < 130).slice(0, stats.arc).forEach(o => {
+      zaps.push({ x0: e.x, y0: e.y, x1: o.x, y1: o.y, t: 9, col: '#2f7fd6' });
+      damageEnemy(o, stats.dmg * 1.5 * stats.arcX);
+    });
+    arcing = false;
+  }
+  const color = PAL[e.type].a;
   run.combo++; run.comboT = 170; summary.kills++;
-  const pts = TYPES[e.type].pts * m;
-  addScore(pts);
-  fxAdd.text(e.x, e.y - 8, '+' + pts, m > 1 ? '#ffe066' : '#fff', 12 + Math.min(m, 6));
+  run.score++;
   fxAdd.burst(e.x, e.y, color, 8, 4); fxAdd.shavings(e.x, e.y, 9);
-  wrecks.push({ spr: SPR[e.type][0], x: e.x, y: e.y, t: 0, spin: rand(-0.12, 0.12) });
-  smudge(e.x, e.y, color, 12);
+  if (e.type !== 'g') { wrecks.push({ spr: SPR[e.type][0], x: e.x, y: e.y, t: 0, spin: rand(-0.12, 0.12) }); smudge(e.x, e.y, color, 12); }
+  else smudge(e.x, e.y, color, 2);
   fxAdd.ring(e.x, e.y, color, 3.5, 16);
   sfx('kill'); addShake(e.type === 'a' ? 2.5 : 1.2);
-  if (m > 1 && run.combo % 6 === 0) fxAdd.text(W / 2, 110, 'CHAIN x' + m + '!', '#ffe066', 22);
   if (e.type === 'p') {
     for (let s = -1; s <= 1; s += 2) spawnMini(e.x + s * 10, e.y, s);
   }
   // Drops: stage-independent chance plus a pity counter so droughts stay short.
   run.pity = (run.pity || 0) + 1;
-  if (e.type !== 'm' && (Math.random() < 0.05 + stats.luck * 0.025 || run.pity > 24)) { dropPickup(e.x, e.y); run.pity = 0; }
+  if (e.type !== 'm' && e.type !== 'g' && (Math.random() < Math.min(0.3, 0.05 + stats.luck * 0.025) + perkLv('luck') * 0.015 || run.pity > 24)) { dropPickup(e.x, e.y); run.pity = 0; }
 }
 function spawnMini(x, y, side) {
   enemies.push(makeEnemy('m', { sx: x, sy: y, x, y, state: 'free', t: 0, side }));
@@ -740,7 +806,7 @@ function dropPickup(x, y, forced) {
     const entries = Object.keys(PICKUPS);
     let tot = entries.reduce((a, k) => a + PICKUPS[k].w, 0), r = Math.random() * tot;
     for (const k of entries) { r -= PICKUPS[k].w; if (r <= 0) { type = k; break; } }
-    type = type || 'gem';
+    type = type || 'spread';
   }
   pickups.push({ x, y, type, t: 0 });
 }
@@ -755,9 +821,8 @@ function collect(p) {
     case 'nova': if (run.nova < run.novaMax + 1) run.nova++; break;
     case 'life':
       if (run.lives < run.maxLives) run.lives++;
-      else { const b = 500 * mult(); addScore(b); label = '+' + b; }
+      else label = 'HULL FULL';
       break;
-    case 'gem': { const b = 150 * mult() * (stats.combos.salvage ? 2 : 1); addScore(b); label = '+' + b; break; }
   }
   sfx('pickup');
   fxAdd.text(player.x, player.y - 34, label, d.color, 15);
@@ -765,9 +830,7 @@ function collect(p) {
 }
 function killMoth() {
   if (!moth) return;
-  const m = mult(), pts = 150 * m;
-  addScore(pts);
-  fxAdd.text(moth.x, moth.y, '+' + pts, '#ffe066', 16);
+  run.score++;
   fxAdd.burst(moth.x, moth.y, '#ffe066', 24, 5);
   sfx('kill');
   run.combo++; run.comboT = 170;
@@ -782,13 +845,12 @@ function damageBoss(dmg, crit) {
   const shielded = boss.nodes.length > 0;
   const real = shielded ? dmg * 0.25 : crit ? dmg * 2 : dmg;
   boss.hp -= real; boss.flash = 3;
-  addScore(Math.ceil(real) * 2 * mult());
   run.comboT = 170;
   if (crit && !shielded) sfx('crit'); else sfx('hit');
   if (boss.hp <= 0) startBossDeath();
 }
 function startBossDeath() {
-  boss.hp = 0; boss.dying = 170; slow = 110;
+  boss.hp = 0; boss.dying = 170; slow = 110; swarmLeft = 0;
   eBullets.forEach(b => fxAdd.burst(b.x, b.y, b.color, 2, 2, 20));
   eBullets = []; lasers = [];
   enemies.forEach(e => { if (!e.dead) { e.dead = true; fxAdd.burst(e.x, e.y, PAL[e.type].a, 12, 4); } });
@@ -834,11 +896,9 @@ function updateBoss() {
       fxAdd.burst(b.x, b.y, b.def.color, 140, 11, 70); fxAdd.burst(b.x, b.y, '#fff', 60, 7, 50);
       fxAdd.ring(b.x, b.y, '#fff', 13, 40); fxAdd.ring(b.x, b.y, b.def.color, 8, 50);
       addShake(18); doFlash(0.9); sfx('bossDead');
-      const pts = 1000 * (stageDef(run.stage).boss / 5) * mult();
-      addScore(pts);
-      fxAdd.text(b.x, b.y, '+' + pts, '#ffe066', 26);
+      run.score++;
       if (run.lives < run.maxLives) { run.lives++; fxAdd.text(player.x, player.y - 40, 'HULL REPAIRED +1', '#7dff9a', 15); }
-      dropPickup(b.x - 30, b.y, 'nova'); dropPickup(b.x + 30, b.y, 'gem');
+      dropPickup(b.x - 30, b.y, 'nova'); dropPickup(b.x + 30, b.y, 'shield');
       boss = null;
     }
     return;
@@ -851,7 +911,8 @@ function updateBoss() {
     if (b.x < margin || b.x > W - margin) { b.dir *= -1; b.x = clamp(b.x, margin, W - margin); }
     b.y = b.ty + Math.sin(b.t * 0.025) * 16;
   }
-  const hpR = b.hp / b.maxHp, every = n => b.t % n === 0, muz = b.y + b.h / 2 - 6;
+  const slowBy = run.endless && run.stage <= 25 ? TUNE.bossSlow : 1;
+  const hpR = b.hp / b.maxHp, every = n => b.t % Math.round(n * slowBy) === 0, muz = b.y + b.h / 2 - 6;
   const col = b.def.color;
   const phaseAt = (n, cond) => {
     if (b.phase < n && cond) {
@@ -866,8 +927,8 @@ function updateBoss() {
   if (b.kind === 'brood') {
     phaseAt(2, hpR < 0.5);
     const p2 = b.phase > 1;
-    if (every(p2 ? 88 : 120)) fan(b.x, muz, p2 ? 6 : 4, p2 ? 1.0 : 0.7, 2.7, col);
-    if (every(p2 ? 280 : 380)) summon(2);
+    if (every((p2 ? 88 : 120))) fan(b.x, muz, p2 ? 6 : 4, p2 ? 1.0 : 0.7, 2.7, col);
+    if (every((p2 ? 280 : 380))) summon(2);
     if (p2 && every(220)) ringShot(b.x, b.y, 12, 2.1, '#ffe066', b.t * 0.1);
   } else if (b.kind === 'maw') {
     phaseAt(2, hpR < 0.5);
@@ -889,7 +950,7 @@ function updateBoss() {
       shootAt(b.x, b.y, b.spin + Math.PI, 2.4, '#d59bff');
     }
     b.nodes = b.nodes.filter(n => {
-      if (n.hp <= 0) { fxAdd.burst(n.x, n.y, '#7ee8ff', 22, 5); fxAdd.ring(n.x, n.y, '#fff', 5, 18); sfx('kill'); addScore(100 * mult()); addShake(3); return false; }
+      if (n.hp <= 0) { fxAdd.burst(n.x, n.y, '#7ee8ff', 22, 5); fxAdd.ring(n.x, n.y, '#fff', 5, 18); sfx('kill'); run.score++; addShake(3); return false; }
       return true;
     });
     b.nodes.forEach(n => {
@@ -922,7 +983,8 @@ function updateBoss() {
 /* ==================== Simulation ==================== */
 function updateEnemies() {
   const def = stageDef(run.stage);
-  const st = Math.min(run.stage, 30);
+  // Shots speed up slowly, reaching full intensity around wave 150.
+  const st = run.endless ? Math.min(48, run.stage <= 20 ? run.stage * TUNE.stEarly : 20 * TUNE.stEarly + (run.stage - 20) * TUNE.stSlope) : run.stage;
   if (tick % 16 === 0 && enemies.some(e => e.sketch && e.state === 'enter' && e.t >= 0)) sfx('scribble');
   let alive = 0, minX = 1e9, maxX = -1e9;
   enemies.forEach(e => {
@@ -949,7 +1011,7 @@ function updateEnemies() {
   if (!def.boss && !stageEnd && !player.dead) {
     fireT--;
     if (fireT <= 0) {
-      fireT = Math.max(13, 62 - st * 2.3) * rand(0.6, 1.4) * diff().fire;
+      fireT = Math.max(run.stage > 150 ? 8 : 13, 62 - st * 2.3) * rand(0.6, 1.4) * diff().fire;
       const low = {};
       const candidates = [];
       enemies.forEach(e => {
@@ -964,6 +1026,23 @@ function updateEnemies() {
         if (e.type === 's') { shootAt(e.x, e.y + 12, aimAngle(e.x, e.y + 12), sp, PAL.s.a, 4); e.flash = 4; }
         else shootAt(e.x, e.y + 12, Math.PI / 2, sp, PAL[e.type].a, 4);
       }
+    }
+  }
+  if (run.endless && swarmLeft > 0 && !stageEnd && !player.dead) {
+    swarmT--;
+    const gnats = enemies.filter(e => e.type === 'g').length;
+    if (swarmT <= 0 && gnats < 110) {
+      swarmT = Math.max(18, 80 - run.stage * 0.4);
+      const n = Math.min(swarmLeft, 3 + Math.floor(run.stage / 18) + Math.floor(Math.random() * 4));
+      const side = Math.random() < 0.5 ? -20 : W + 20, startY = rand(70, 300);
+      const ghp = Math.max(1, Math.round(hpTier(run.stage) * endlessRamp(run.stage) * 0.22 * diff().hp));
+      for (let i = 0; i < n; i++) {
+        const g = makeEnemy('g', { sx: side, sy: startY, x: side + rand(-30, 30), y: startY + rand(-30, 30), state: 'gnat', vx: 0, vy: 0, seed: Math.random() * TAU, dive: 0 });
+        g.hp = g.maxHp = ghp;
+        enemies.push(g);
+      }
+      swarmLeft -= n;
+      sfx('scribble');
     }
   }
   let breached = false;
@@ -1015,6 +1094,17 @@ function updateEnemies() {
       e.y += vy;
       if (!e.fired && e.y > 260) { e.fired = true; shootAt(e.x, e.y + 10, aimAngle(e.x, e.y), 3.8, PAL.v.a); }
       if (e.y > H + 30) { e.state = 'enter'; e.sketch = false; e.t = 0; e.sx = rand(60, W - 60); e.sy = -40; e.swirl = rand(-50, 50); e.cool = rand(200, 520); }
+    } else if (e.state === 'gnat') {
+      // Each gnat circles the ship on its own path, so together they flock.
+      const a = e.phase * 0.6 + e.seed;
+      let gx = player.x + Math.cos(a) * (140 + e.seed * 16), gy = 270 + Math.sin(a * 1.3) * 140;
+      if (e.dive > 0) { e.dive--; gx = player.x; gy = player.y + 70; }
+      else if (Math.random() < 0.0018) e.dive = 80;
+      e.vx = clamp(e.vx + clamp(gx - e.x, -1, 1) * 0.34 + rand(-0.25, 0.25), -4.2, 4.2);
+      e.vy = clamp(e.vy + clamp(gy - e.y, -1, 1) * 0.28 + rand(-0.25, 0.25), -3.4, 3.8);
+      e.x += e.vx; e.y += e.vy;
+      if (e.y > H + 20) { e.y = 60; e.dive = 0; e.vy = 0; }
+      if (Math.random() < 0.0009 && eBullets.length < 90) shootAt(e.x, e.y + 8, Math.PI / 2, 3.4, PAL.g.b);
     } else if (e.state === 'free') {
       e.t++;
       e.x += e.side * Math.max(0, 2.6 - e.t * 0.06);
@@ -1023,7 +1113,7 @@ function updateEnemies() {
       if (e.y > H + 30) e.dead = true;
     }
     if (e.state !== 'enter' && !player.dead && Math.abs(e.x - player.x) < (e.w / 2 + 12) && Math.abs(e.y - player.y) < (e.h / 2 + 14)) {
-      hitPlayer(false); damageEnemy(e, 99);
+      hitPlayer(false); damageEnemy(e, e.hp);
     }
     // Enemies grind away barriers they touch.
     if (e.y + e.h / 2 > 556 && e.state !== 'enter') barriers.forEach(k => {
@@ -1105,7 +1195,7 @@ function updateTutorial() {
   stageT++;
   if (note) { note.t--; if (note.t <= 0) note = null; }
   if (!note && noteQueue.length) note = noteQueue.shift();
-  if (save.tutorialDone || run.stage > 3) return;
+  if (save.tutorialDone || run.endless || run.stage > 3) return;
   const ship = () => ({ x: player.x, y: player.y - 30 });
   if (pickups.length) { const k = pickups[0]; teach('pickup', 'Grab these for power-ups', () => ({ x: k.x, y: k.y - 22 })); }
   if (run.stage === 1) {
@@ -1122,8 +1212,67 @@ function updateTutorial() {
     if (stageT === 90) { const a = enemies.find(e => e.type === 'a'); if (a) teach('shell', 'Shellbacks need several hits', () => (a.dead ? ship() : { x: a.x, y: a.y + 22 })); }
   }
 }
+function nearestTarget(x, y) {
+  let best = null, bd = 1e12;
+  enemies.forEach(e => {
+    if (e.dead || e.state === 'enter' || e.y < TOP) return;
+    const d = (e.x - x) * (e.x - x) + (e.y - y) * (e.y - y);
+    if (d < bd) { bd = d; best = e; }
+  });
+  if (boss && !boss.entering && !boss.dying) {
+    const d = (boss.x - x) * (boss.x - x) + (boss.y - y) * (boss.y - y);
+    if (d < bd) best = boss;
+  }
+  return best;
+}
+const autoBullet = (x, y, ang, sp, dmg, color, extra) => pBullets.push(Object.assign({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, dmg, pierce: 0, hits: null, counted: true, color }, extra));
+const due = (k, cd) => { autoT[k] = (autoT[k] || 0) - 1; if (autoT[k] <= 0) { autoT[k] = cd; return true; } return false; };
+function updateAutos() {
+  const p = player, s = stats;
+  if (p.dead || stageEnd) return;
+  if (s.missile && due('missile', Math.max(32, 96 - s.missile * 11))) {
+    [-1, 1].slice(0, s.missile >= 3 ? 2 : 1).forEach(dir => {
+      for (let i = 0; i < (s.missile >= 5 ? 2 : 1); i++) autoBullet(p.x + dir * 30, p.y, -Math.PI / 2 + dir * (0.5 + i * 0.3), 7.5, s.dmg * 3 * s.missileX, '#d0283c', { home: true });
+    });
+    sfx('hit');
+  }
+  if (s.turret && due('turret', Math.max(9, 30 - s.turret * 4))) {
+    const t = nearestTarget(p.x, p.y - 12);
+    if (t) { p.turretA = Math.atan2(t.y - (p.y - 12), t.x - p.x); autoBullet(p.x, p.y - 12, p.turretA, 12, s.dmg * s.turretX, '#14a79a'); }
+  }
+  if (s.zapper && due('zapper', Math.max(22, 90 - s.zapper * 14))) {
+    eBullets.filter(b => Math.hypot(b.x - p.x, b.y - p.y) < 190).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)).slice(0, s.zapper).forEach(b => {
+      zaps.push({ x0: p.x, y0: p.y - 20, x1: b.x, y1: b.y, t: 7, col: '#d9a400' });
+      b.dead = true;
+    });
+    eBullets = eBullets.filter(b => !b.dead);
+  }
+  if (s.orbit) {
+    p.orbA = (p.orbA || 0) + 0.09;
+    for (let i = 0; i < s.orbit; i++) {
+      const a = p.orbA + i * TAU / s.orbit, bx = p.x + Math.cos(a) * 72, by = p.y - 8 + Math.sin(a) * 72;
+      eBullets = eBullets.filter(b => Math.hypot(b.x - bx, b.y - by) > 16);
+      enemies.forEach(e => {
+        if (!e.dead && e.state !== 'enter' && Math.abs(e.x - bx) < e.w / 2 + 12 && Math.abs(e.y - by) < e.h / 2 + 12 && (!e.bladeT || tick - e.bladeT > 12)) { e.bladeT = tick; damageEnemy(e, s.dmg * 1.3 * s.orbitX); }
+      });
+    }
+  }
+  if (s.reactor && due('reactor', Math.max(600, 2100 - s.reactor * 350)) && run.nova < run.novaMax + 1) { run.nova++; fxAdd.text(p.x, p.y - 34, '+1 NOVA', '#d59bff', 14); }
+  if (s.medic && due('medic', Math.max(1200, 3400 - s.medic * 500)) && run.lives < run.maxLives) { run.lives++; sfx('pickup'); fxAdd.text(p.x, p.y - 40, 'REPAIRED +1', '#7dff9a', 14); }
+}
 function updatePlayerBullets() {
   pBullets.forEach(b => {
+    if (b.home && tick % 3 === 0) {
+      const t = nearestTarget(b.x, b.y);
+      if (t) {
+        const want = Math.atan2(t.y - b.y, t.x - b.x), now = Math.atan2(b.vy, b.vx);
+        let turn = want - now;
+        while (turn > Math.PI) turn -= TAU;
+        while (turn < -Math.PI) turn += TAU;
+        const na = now + clamp(turn, -0.35, 0.35);
+        b.vx = Math.cos(na) * 7.5; b.vy = Math.sin(na) * 7.5;
+      }
+    }
     b.x += b.vx + windNow(); b.y += b.vy;
     if (b.y < TOP - 10 || b.x < -10 || b.x > W + 10 || inRip(b)) { b.dead = true; return; }
     if (moth && Math.abs(b.x - moth.x) < 32 && Math.abs(b.y - moth.y) < 14) {
@@ -1238,6 +1387,8 @@ function updateMoth() {
 }
 function updateFx() {
   particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vx *= 0.97; p.vy = p.vy * 0.97 + (p.grav || 0); p.life--; });
+  zaps.forEach(z => { z.t--; });
+  zaps = zaps.filter(z => z.t > 0);
   wrecks.forEach(k => { k.t++; });
   wrecks = wrecks.filter(k => k.t < 26);
   particles = particles.filter(p => p.life > 0);
@@ -1256,9 +1407,9 @@ function updateFx() {
 function checkStageEnd() {
   if (player.dead) return;
   if (!stageEnd) {
-    if (!boss && enemies.length === 0) {
+    if (!boss && enemies.length === 0 && swarmLeft <= 0) {
       stageEnd = 90;
-      eBullets.forEach(b => { fxAdd.burst(b.x, b.y, b.color, 3, 2, 16); addScore(5); });
+      eBullets.forEach(b => { fxAdd.burst(b.x, b.y, b.color, 3, 2, 16); });
       eBullets = []; lasers = [];
       sfx('clear');
       banner = { text: 'STAGE CLEAR', sub: stageDef(run.stage).name, t: 85, color: '#7dff9a', max: 85 };
@@ -1280,6 +1431,7 @@ function step() {
     if (mode !== 'play') return; // gameOver() may have switched screens
     updatePlayerBullets();
     if (boss) updateBoss();
+    updateAutos();
     updateEnemies();
     updateMoth();
     updateEnemyBullets();
@@ -1301,78 +1453,91 @@ function finishStage() {
   note = null; noteQueue = [];
   const s = summary, stage = run.stage;
   const acc = s.shots ? s.landed / s.shots : 0;
-  const clearB = 100 * stage, flawB = s.hits === 0 ? 300 * stage : 0, accB = Math.round(acc * 200) * stage;
-  addScore(clearB + flawB + accB);
   const stars = 1 + (s.hits === 0 ? 1 : 0) + (acc >= 0.5 ? 1 : 0);
   if (stage >= 3) save.tutorialDone = true;
-  s.acc = acc; s.clearB = clearB; s.flawB = flawB; s.accB = accB; s.stars = stars;
+  s.acc = acc; s.stars = stars;
   if (run.endless) {
     save.bestWave = Math.max(save.bestWave, stage);
     if (run.score > save.hiEndless) { save.hiEndless = run.score; s.newHi = true; }
   } else {
-    save.stars[stage] = Math.max(save.stars[stage] || 0, stars);
-    save.unlocked = Math.max(save.unlocked, Math.min(20, stage + 1));
-    if (run.ranked && run.score > save.hi) { save.hi = run.score; s.newHi = true; }
   }
   persist();
   sfx('upgrade');
   setMode('clear');
 }
 function afterClear() {
-  if (!run.endless && run.stage >= 20) {
-    save.run = null; persist();
+  if (!run.endless && run.stage >= TUTORIAL_LEN) {
+    run.reward = save.tutorialCleared ? 0 : 5;
+    save.tutorialCleared = true; save.pencils += run.reward; persist();
     startFlip();
     particles = []; rings = []; floaters = [];
     setMode('victory');
     return;
   }
-  if (run.stage % 2 === 0 || run.stage % 5 === 0) { rollUpgrades(); setMode('upgrade'); }
+  if (run.endless ? run.stage % 5 === 0 : run.stage % 2 === 0 || run.stage % 5 === 0) { rollUpgrades(); setMode('upgrade'); }
   else startStage(run.stage + 1);
 }
 function rollUpgrades() {
-  const pool = Object.keys(UPGRADES).filter(k => (run.up[k] || 0) < UPGRADES[k].max);
+  const open = k => (run.up[k] || 0) < UPGRADES[k].max && (!UPGRADES[k].unlock || (run.endless && run.stage >= UPGRADES[k].unlock));
+  const pool = Object.keys(UPGRADES).filter(open);
+  if (run.lives < run.maxLives) pool.push('repair');
   for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
   // Offer a firepower option early so a run never starves for damage.
   if ((run.up.guns || 0) < 2 && run.stage <= 10 && pool.indexOf('guns') > 2) { pool.splice(pool.indexOf('guns'), 1); pool.unshift('guns'); }
   upgradeChoices = pool.slice(0, 3);
+  // Once automatic systems unlock, every choice includes at least one.
+  const autos = pool.filter(k => UPGRADES[k] && UPGRADES[k].auto);
+  if (autos.length && !upgradeChoices.some(k => UPGRADES[k] && UPGRADES[k].auto)) upgradeChoices[2] = pick(autos);
   while (upgradeChoices.length < 3) upgradeChoices.push('repair');
 }
 function chooseUpgrade(id) {
   const combo = id === 'repair' ? null : comboFrom(id);
-  if (id === 'repair') { run.lives = Math.min(run.maxLives, run.lives + 1); addScore(1000); }
+  if (id === 'repair') { run.lives = Math.min(run.maxLives, run.lives + 1); }
   else applyUpgrade(id);
   sfx('upgrade');
   if (combo) bannerNext = { text: 'COMBO!', sub: combo.name + ': ' + combo.desc, t: 150, color: '#d61f6b', max: 150 };
   startStage(run.stage + 1);
 }
+/* Dying always ends the run. It pays half of what a prestige would. */
+function recordEndlessBest() {
+  save.bestWave = Math.max(save.bestWave, run.stage);
+  if (run.score > save.hiEndless) { save.hiEndless = run.score; run.newHi = true; }
+}
 function gameOver() {
   if (run.endless) {
-    save.bestWave = Math.max(save.bestWave, run.stage);
-    if (run.score > save.hiEndless) { save.hiEndless = run.score; run.newHi = true; }
+    recordEndlessBest();
+    run.earned = pencilsFor(run.stage, false);
+    save.pencils += run.earned;
+    save.endlessRun = null;
     persist();
-  } else if (run.ranked && run.score > save.hi) { save.hi = run.score; persist(); run.newHi = true; }
+  }
   sfx('over');
   setMode('gameover');
 }
-function beginNewRun() { ensureAudio(); newRun(1, true); player = null; shownScore = 0; startStage(1); }
-function beginEndless() { ensureAudio(); newRun(1, true, true); player = null; shownScore = 0; startStage(1); }
-function startPending() {
-  if (pending === 'endless') beginEndless();
-  else if (typeof pending === 'number') beginFromSelect(pending);
-  else beginNewRun();
+function doPrestige() {
+  recordEndlessBest();
+  run.earned = pencilsFor(run.stage, true);
+  save.pencils += run.earned;
+  save.prestiges++;
+  save.endlessRun = null;
+  persist();
+  sfx('upgrade');
+  startFlip();
+  setMode('prestige');
 }
-function beginFromSelect(n) {
-  newRun(n, n === 1);
-  for (let i = 0, k = upgradesBefore(n); i < k && i < CATCHUP.length; i++) applyUpgrade(CATCHUP[i]);
-  run.lives = run.maxLives;
-  run.nova = run.novaMax;
-  player = null; shownScore = 0;
-  startStage(n);
+function beginTutorial() { ensureAudio(); newRun(1, false); player = null; shownScore = 0; startStage(1); }
+function beginEndless() { ensureAudio(); newRun(1, true, true); player = null; shownScore = 0; startStage(1); }
+function continueEndless() { ensureAudio(); restoreRun(save.endlessRun, false); player = null; shownScore = run.score; startStage(run.stage); }
+function askConfirm(text, sub, yes) { confirmBox = { text, sub, yes }; setMode('confirm'); }
+function buyPerk(id) {
+  const k = PERKS[id], l = save.perks[id] || 0;
+  if (l >= k.max || save.pencils < k.cost(l)) { sfx('deny'); return; }
+  save.pencils -= k.cost(l); save.perks[id] = l + 1; persist(); sfx('upgrade');
 }
 function pauseGame() { if (mode === 'play') { sfx('click'); setMode('pause'); } }
 
 /* ==================== Menus ==================== */
-let ui = [], focus = 0, uiCols = 1, uiLock = 0, uiBack = null, pending = 'new';
+let ui = [], focus = 0, uiCols = 1, uiLock = 0, uiBack = null, confirmBox = null, returnTo = 'title';
 function btn(x, y, w, h, label, onClick, o) { return Object.assign({ x, y, w, h, label, onClick, enabled: true }, o || {}); }
 function toggleLabel(n, k) { return () => n + ': ' + (save[k] ? 'ON' : 'OFF'); }
 function toggle(k) {
@@ -1389,9 +1554,11 @@ function setMode(m) {
   const col = (y, list) => list.forEach((b, i) => ui.push(btn(bx, y + i * 54, bw, 44, b[0], b[1], b[2])));
   if (m === 'title') {
     const list = [];
-    if (save.run) list.push(['CONTINUE - STAGE ' + save.run.stage, () => { restoreRun(save.run, false); player = null; shownScore = run.score; startStage(run.stage); }]);
-    list.push(['NEW RUN', () => { pending = 'new'; setMode('ship'); }], ['ENDLESS MODE', () => { pending = 'endless'; setMode('ship'); }], ['STAGE SELECT', () => setMode('select')], ['HOW TO PLAY', () => setMode('howto')], ['OPTIONS', () => setMode('options')]);
-    col(save.run ? 320 : 346, list);
+    if (save.endlessRun) list.push(['CONTINUE - WAVE ' + save.endlessRun.stage, continueEndless]);
+    else list.push(['PLAY ENDLESS', () => setMode('ship')]);
+    list.push(['TUTORIAL', beginTutorial], ['GOLDEN PENCILS', () => { returnTo = 'title'; setMode('shop'); }], ['HOW TO PLAY', () => setMode('howto')], ['OPTIONS', () => setMode('options')]);
+    col(346, list);
+    if (!save.tutorialCleared && !save.endlessRun) focus = 1;
   } else if (m === 'options') {
     col(230, [[toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], [toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')],
       [() => save.tutorialDone ? 'REPLAY TUTORIAL' : 'TUTORIAL: READY', () => { save.tutorialDone = false; save.notesSeen = {}; persist(); sfx('click'); }], ['BACK', () => setMode('title')]]);
@@ -1399,27 +1566,40 @@ function setMode(m) {
   } else if (m === 'howto') {
     ui.push(btn(bx, 696, bw, 44, 'BACK', () => setMode('title')));
     uiBack = () => setMode('title');
-  } else if (m === 'select') {
-    uiCols = 5;
-    for (let i = 1; i <= 20; i++) {
-      const cx = (i - 1) % 5, cy = Math.floor((i - 1) / 5);
-      ui.push(btn(45 + cx * 112, 150 + cy * 118, 102, 104, '' + i, () => { pending = i; setMode('ship'); }, { enabled: i <= save.unlocked, stage: i }));
-    }
-    ui.push(btn(bx, 696, bw, 44, 'BACK', () => setMode('title')));
-    focus = save.unlocked - 1;
-    uiBack = () => setMode('title');
   } else if (m === 'ship') {
-    uiCols = 2;
-    Object.keys(SHIPS).forEach((id, i) => ui.push(btn(i % 2 ? 330 : 40, 74 + Math.floor(i / 2) * 136, 270, 126, '', () => { save.ship = id; persist(); }, { shipId: id })));
-    Object.keys(DIFFS).forEach((id, i) => ui.push(btn(40 + i * 190, 376, 180, 44, DIFFS[id].name.toUpperCase(), () => { save.difficulty = id; persist(); }, { sel: () => save.difficulty === id })));
-    ui.push(btn(180, 470, 280, 44, toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')));
-    ui.push(btn(180, 526, 280, 54, 'START', startPending));
-    ui.push(btn(180, 594, 280, 44, 'BACK', () => setMode(typeof pending === 'number' ? 'select' : 'title')));
+    Object.keys(SHIPS).forEach((id, i) => ui.push(btn(30 + i * 148, 72, 136, 120, '', () => { save.ship = id; persist(); }, { shipId: id })));
+    Object.keys(COLORS).forEach((id, i) => ui.push(btn(44 + i * 70, 212, 60, 48, '', () => { save.tint = id; persist(); }, { tintId: id, enabled: id !== 'gold' || !!save.perks.goldpaint })));
+    Object.keys(DIFFS).forEach((id, i) => ui.push(btn(40 + i * 190, 296, 180, 44, DIFFS[id].name.toUpperCase(), () => { save.difficulty = id; persist(); }, { sel: () => save.difficulty === id })));
+    ui.push(btn(180, 382, 280, 44, toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')));
+    ui.push(btn(180, 436, 280, 54, 'START', beginEndless));
+    ui.push(btn(180, 498, 280, 44, 'BACK', () => setMode('title')));
     focus = ui.length - 2;
     uiBack = ui[ui.length - 1].onClick;
+  } else if (m === 'shop') {
+    Object.keys(PERKS).forEach((id, i) => ui.push(btn(40, 98 + i * 76, W - 80, 68, '', () => buyPerk(id), { perkId: id })));
+    ui.push(btn(bx, 636, bw, 44, 'BACK', () => setMode(returnTo)));
+    focus = ui.length - 1;
+    uiBack = ui[ui.length - 1].onClick;
+  } else if (m === 'confirm') {
+    col(380, [['YES', confirmBox.yes], ['GO BACK', () => setMode('pause')]]);
+    focus = 1;
+    uiBack = () => setMode('pause');
+  } else if (m === 'prestige') {
+    col(470, [['SPEND PENCILS', () => { returnTo = 'prestige'; setMode('shop'); }], ['PLAY ENDLESS', () => setMode('ship')], ['MENU', () => setMode('title')]]);
+    uiLock = 40;
   } else if (m === 'pause') {
-    col(225, [['RESUME', () => { sfx('click'); mode = 'play'; ui = []; uiBack = null; }], [toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], [toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')], ['QUIT TO MENU', () => setMode('title')]]);
+    const list = [['RESUME', () => { sfx('click'); mode = 'play'; ui = []; uiBack = null; }], ['SETTINGS', () => setMode('settings')]];
+    if (run.endless) {
+      if (run.stage >= 10) list.push(['PRESTIGE: +' + pencilsFor(run.stage, true) + ' PENCILS', () => askConfirm('Prestige now?', 'Your run ends and you earn ' + pencilsFor(run.stage, true) + ' Golden Pencils.', doPrestige)]);
+      else list.push(['PRESTIGE AT WAVE 10', () => {}, { enabled: false }]);
+      list.push(['SAVE AND QUIT', () => setMode('title')]);
+    } else list.push(['QUIT TO MENU', () => setMode('title')]);
+    col(210, list);
     uiBack = ui[0].onClick;
+  } else if (m === 'settings') {
+    col(210, [[toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], [toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')], ['BACK', () => setMode('pause')]]);
+    focus = 4;
+    uiBack = () => setMode('pause');
   } else if (m === 'clear') {
     ui.push(btn(bx, 560, bw, 48, 'CONTINUE', afterClear));
     uiLock = 30;
@@ -1427,11 +1607,11 @@ function setMode(m) {
     upgradeChoices.forEach((id, i) => ui.push(btn(60, 210 + i * 130, W - 120, 116, '', () => chooseUpgrade(id), { upgrade: id, index: i })));
     uiLock = 30;
   } else if (m === 'gameover') {
-    if (run.endless) col(430, [['TRY AGAIN', beginEndless], ['MENU', () => setMode('title')]]);
-    else col(430, [['RETRY STAGE ' + run.stage, () => { restoreRun(run.snap, true); player = null; shownScore = 0; startStage(run.stage); }], ['NEW RUN', beginNewRun], ['MENU', () => setMode('title')]]);
+    if (run.endless) col(430, [['PLAY AGAIN', () => setMode('ship')], ['SPEND PENCILS', () => { returnTo = 'title'; setMode('shop'); }], ['MENU', () => setMode('title')]]);
+    else col(430, [['RETRY STAGE ' + run.stage, () => { restoreRun(run.snap, true); player = null; shownScore = 0; startStage(run.stage); }], ['MENU', () => setMode('title')]]);
     uiLock = 40;
   } else if (m === 'victory') {
-    col(530, [['ENDLESS MODE', () => { pending = 'endless'; setMode('ship'); }], ['NEW RUN', beginNewRun], ['MENU', () => setMode('title')]]);
+    col(530, [[save.endlessRun ? 'CONTINUE ENDLESS' : 'PLAY ENDLESS', () => save.endlessRun ? continueEndless() : setMode('ship')], ['MENU', () => setMode('title')]]);
     uiLock = 60;
   }
 }
@@ -1817,76 +1997,135 @@ function pixelRing(x, y, r, color, alpha, cell) {
   c.globalAlpha = 1;
 }
 /* Every upgrade bolts a hand-coloured part onto the ship. */
-const part = (rows, pal, scale) => [makeRowsSprite(rows, pal, scale || 2), makeRowsSprite(rows, pal, scale || 2)];
-const PARTS = {
-  barrel: part(['a', 'a', 'b', 'b', 'b'], { a: '#4a4438', b: '#8a8270' }, 3),
-  needle: part(['a', 'a', 'a', 'b', 'b'], { a: '#0f86b8', b: '#9fdcf5' }, 3),
-  needleLong: part(['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b'], { a: '#0f86b8', b: '#9fdcf5' }, 3),
-  rail: part(['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b'], { a: '#d0283c', b: '#ffb3a8' }, 3),
-  crown: part(['.a.', 'aba', '.a.'], { a: '#d0283c', b: '#ffd766' }, 3),
-  spark: part(['a.a', '.a.', 'a.a'], { a: '#f2b01e' }, 2),
-  plate: part(['aaaa', 'abba', 'aaaa'], { a: '#5c6b78', b: '#a9bac8' }),
-  drum: part(['aa', 'bb', 'aa', 'bb'], { a: '#c98a00', b: '#f2d675' }),
-  nozzle: part(['aaa', 'bbb', '.b.'], { a: '#8a8270', b: '#4a4438' }),
-  fin: part(['.a.', 'aba', 'aba', 'aba', '.b.'], { a: '#14a79a', b: '#9ff0e4' }),
-  fin2: part(['.a.', 'aba', '.b.'], { a: '#14a79a', b: '#9ff0e4' }),
-  cell: part(['.a.', 'aba', 'aba', '.a.'], { a: '#8a47d1', b: '#e6ccff' }),
-  cellOff: part(['.a.', 'aba', 'aba', '.a.'], { a: '#8a8270', b: '#c9c0a8' }),
-  magnet: part(['b.b', 'a.a', 'a.a', 'aaa'], { a: '#d0283c', b: '#a9bac8' }),
-  clover: part(['.a.a.', 'aaaaa', '.aaa.', '..b..'], { a: '#2fa84f', b: '#14703f' })
+const PART_DATA = {
+  barrel: [['a', 'a', 'b', 'b', 'b'], { a: '#4a4438', b: '#8a8270' }, 3],
+  needle: [['a', 'a', 'a', 'b', 'b'], { a: '#0f86b8', b: '#9fdcf5' }, 3],
+  needleLong: [['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b'], { a: '#0f86b8', b: '#9fdcf5' }, 3],
+  rail: [['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b'], { a: '#d0283c', b: '#ffb3a8' }, 3],
+  crown: [['.a.', 'aba', '.a.'], { a: '#d0283c', b: '#ffd766' }, 3],
+  spark: [['a.a', '.a.', 'a.a'], { a: '#f2b01e' }, 2],
+  plate: [['aaaa', 'abba', 'aaaa'], { a: '#5c6b78', b: '#a9bac8' }, 2],
+  drum: [['aa', 'bb', 'aa', 'bb'], { a: '#c98a00', b: '#f2d675' }, 2],
+  nozzle: [['aaa', 'bbb', '.b.'], { a: '#8a8270', b: '#4a4438' }, 2],
+  fin: [['.a.', 'aba', 'aba', 'aba', '.b.'], { a: '#14a79a', b: '#9ff0e4' }, 2],
+  fin2: [['.a.', 'aba', '.b.'], { a: '#14a79a', b: '#9ff0e4' }, 2],
+  cell: [['.a.', 'aba', 'aba', '.a.'], { a: '#8a47d1', b: '#e6ccff' }, 2],
+  cellOff: [['.a.', 'aba', 'aba', '.a.'], { a: '#8a8270', b: '#c9c0a8' }, 2],
+  magnet: [['b.b', 'a.a', 'a.a', 'aaa'], { a: '#d0283c', b: '#a9bac8' }, 2],
+  clover: [['.a.a.', 'aaaaa', '.aaa.', '..b..'], { a: '#2fa84f', b: '#14703f' }, 2],
+  star: [['.a.', 'aba', '.a.'], { a: '#d9a400', b: '#fff0a8' }, 2],
+  tip: [['a', 'a', 'b'], { a: '#d9a400', b: '#fff0a8' }, 3],
+  splay: [['a', 'a', 'b', 'b'], { a: '#c98a00', b: '#ffe066' }, 3],
+  gatling: [['a.a', 'aba', 'aba', 'a.a'], { a: '#d0283c', b: '#ffb3a8' }, 2]
 };
+Object.assign(PART_DATA, {
+  pod: [['.a.', 'aba', 'aba', 'aba', 'c.c'], { a: '#d0283c', b: '#ffb3a8', c: '#4a4438' }, 2],
+  dome: [['.aa.', 'abba', 'aaaa'], { a: '#14a79a', b: '#9ff0e4' }, 2],
+  antenna: [['b', 'a', 'a', 'a'], { a: '#4a4438', b: '#d9a400' }, 2],
+  coil: [['a.a', 'bbb', 'a.a', 'bbb'], { a: '#2f7fd6', b: '#9fdcf5' }, 2],
+  core: [['.a.', 'aba', '.a.'], { a: '#8a47d1', b: '#fff0a8' }, 3],
+  cross: [['.a.', 'aaa', '.a.'], { a: '#2fa84f' }, 2]
+});
+const BLADE_ROWS = ['..a..', '.aba.', 'abcba', '.aba.', '..a..'];
+const BLADE_SPR = makeRowsSprite(BLADE_ROWS, { a: '#4a4438', b: '#a9bac8', c: '#d0283c' }, 3);
+function drawOrbBlade(x, y, a) {
+  c.save(); c.translate(Math.round(x), Math.round(y)); c.rotate(a * 3);
+  drawS(BLADE_SPR, 0, 0);
+  c.restore();
+}
+const PART_TIERS = [null, { a: '#d9a400', b: '#fff0a8' }, { a: '#d61f6b', b: '#ffc1d9' }];
+const partCache = {};
+function partSprites(name, tier) {
+  const k = name + tier;
+  if (!partCache[k]) {
+    const d = PART_DATA[name], pal = PART_TIERS[tier] || d[1];
+    partCache[k] = [makeRowsSprite(d[0], pal, d[2]), makeRowsSprite(d[0], pal, d[2])];
+  }
+  return partCache[k];
+}
+const partTier = l => l >= 8 ? 2 : l >= 4 ? 1 : 0;
 function drawFlame(x, w, len) {
   const hw = Math.round(w / 8) * 4 || 2;
   c.fillStyle = '#e8791a'; c.fillRect(x - hw, 0, hw * 2, 4);
   c.fillStyle = '#f2b01e'; c.fillRect(x - hw / 2, 4, hw, len);
   c.fillStyle = '#d9381e'; c.fillRect(x - hw / 2, 4 + len, hw / 2, 4); c.fillRect(x, len, hw / 2, 4);
 }
-function drawShip(x, y, vx, big, id, up) {
+function drawShip(x, y, vx, big, id, up, tint) {
   c.save();
   c.translate(Math.round(x), Math.round(y));
   const sq = 1 - Math.min(Math.abs(vx) * 0.012, 0.15);
-  c.scale(sq * (big || 1), big || 1);
-  const sid = id || (run && run.ship) || 'lancer';
-  const frames = SPR_SHIPS[sid], ship = frames[0], preview = !!up;
-  if (!up && !id && run && mode !== 'title') up = run.up;
+  const inRun = run && mode !== 'title' && mode !== 'ship' && mode !== 'shop';
+  const sid = id || (inRun ? run.ship : save.ship), col = tint || (inRun ? run.tint : save.tint) || 'blue';
+  const frames = shipSprites(sid, col), ship = frames[0], preview = !!up;
+  if (!up && !id && inRun) up = run.up;
   const lv = k => (up && up[k]) || 0;
-  const fr = Math.floor(tick / 10) % 2, P = (n, px, py) => drawS(PARTS[n][fr], px, py);
-  const both = (n, px, py) => { P(n, -px, py); P(n, px, py); };
+  // The ship physically grows as a run goes on. Only the art grows, not the hitbox.
+  let total = 0;
+  if (up) Object.keys(up).forEach(k => { total += up[k]; });
+  const grow = 1 + Math.min(0.4, total * 0.01);
+  c.scale(sq * (big || 1) * grow, (big || 1) * grow);
+  const fr = Math.floor(tick / 10) % 2;
+  const P = (n, px, py, t) => drawS(partSprites(n, t || 0)[fr], px, py);
+  const both = (n, px, py, t) => { P(n, -px, py, t); P(n, px, py, t); };
   const top = -ship.h / 2, bot = ship.h / 2;
-  // Engines first, so they sit behind the hull.
+  // Temporary pickups: blink for their last two seconds.
+  const T0 = inRun && !preview ? run.timers : {};
+  const on = k => T0[k] > 0 && (T0[k] > 120 || Math.floor(tick / 6) % 2);
   const fl = 1 + Math.floor(Math.random() * 3), th = lv('thrusters');
   c.save(); c.translate(0, bot);
-  drawFlame(0, 16 + (th >= 3 ? 8 : 0), 4 * fl + th * 3);
+  drawFlame(0, 16 + (th >= 3 ? 8 : 0), 4 * fl + Math.min(th, 6) * 3 + (on('rapid') ? 8 : 0));
   if (th >= 1) { drawFlame(-12, 8, 2 * fl + 4); drawFlame(12, 8, 2 * fl + 4); }
   if (th >= 2) { drawFlame(-20, 8, 2 * fl + 2); drawFlame(20, 8, 2 * fl + 2); }
   c.restore();
-  if (th >= 1) both('nozzle', 12, bot - 2);
-  if (th >= 2) both('nozzle', 20, bot - 4);
-  for (let i = 0; i < lv('novacell'); i++) {
-    const lit = preview || !run || run.nova > i;
-    const px = i === 0 ? 8 : 16;
-    P(lit ? 'cell' : 'cellOff', -px, bot + 2); P(lit ? 'cell' : 'cellOff', px, bot + 2);
+  if (th >= 1) both('nozzle', 12, bot - 2, partTier(th));
+  if (th >= 2) both('nozzle', 20, bot - 4, partTier(th));
+  for (let i = 0; i < Math.min(lv('novacell'), 2); i++) {
+    const lit = preview || !inRun || run.nova > i, px = i === 0 ? 8 : 16;
+    P(lit ? 'cell' : 'cellOff', -px, bot + 2, lit ? partTier(lv('novacell')) : 0); P(lit ? 'cell' : 'cellOff', px, bot + 2, lit ? partTier(lv('novacell')) : 0);
   }
-  // Things that stick out past the outline.
-  if (lv('guns') >= 2) both('barrel', 16, -2);
+  if (on('spread')) { c.save(); [-1, 1].forEach(s => { c.save(); c.translate(s * 24, -6); c.rotate(s * 0.45); P('splay', 0, 0); c.restore(); }); c.restore(); }
+  if (lv('guns') >= 3) both('barrel', 16, -2);
+  if (lv('guns') === 2) P('barrel', 0, top + 4);
   if (lv('guns') >= 1) both('barrel', 9, top + 12);
-  if (lv('pierce') >= 1) P(lv('guns') ? 'rail' : lv('pierce') >= 2 ? 'needleLong' : 'needle', 0, top - (lv('guns') || lv('pierce') >= 2 ? 10 : 6));
-  if (lv('aegis') >= 1) both('fin', 26, 8);
-  if (lv('aegis') >= 2) both('fin2', 32, 12);
+  if (lv('pierce') >= 1) P(lv('guns') ? 'rail' : lv('pierce') >= 2 ? 'needleLong' : 'needle', 0, top - (lv('guns') || lv('pierce') >= 2 ? 10 : 6), lv('guns') ? 0 : partTier(lv('pierce')));
+  if (on('lance')) { c.fillStyle = '#0f86b8'; c.fillRect(-2, top - 44, 4, 40); c.fillStyle = '#9fdcf5'; c.fillRect(-1, top - 44 + (tick % 8) * 5, 2, 8); }
+  if (lv('aegis') >= 1) both('fin', 26, 8, partTier(lv('aegis')));
+  if (lv('aegis') >= 2) both('fin2', 32, 12, partTier(lv('aegis')));
   drawS(frames[fr], 0, 0);
-  // Things bolted on top of the hull.
-  if (lv('hull') >= 1) both('plate', 15, 10);
-  if (lv('hull') >= 2) both('plate', 7, 15);
-  if (lv('hull') >= 3) both('plate', 20, 15);
-  for (let i = 0; i < lv('loader'); i++) both('drum', 6, -6 + i * 9);
-  if (lv('magnet')) P('magnet', 0, 7);
-  if (lv('lucky') >= 1) P('clover', -22, -2);
-  if (lv('lucky') >= 2) P('clover', 22, -2);
-  if (lv('overcharge') >= 1) P('crown', 0, top + 8);
+  if (lv('hull') >= 1) both('plate', 15, 10, partTier(lv('hull')));
+  if (lv('hull') >= 2) both('plate', 7, 15, partTier(lv('hull')));
+  if (lv('hull') >= 3) both('plate', 20, 15, partTier(lv('hull')));
+  for (let i = 0; i < Math.min(lv('loader'), 3); i++) both('drum', 6, -6 + i * 9, partTier(lv('loader')));
+  if (lv('magnet')) P('magnet', 0, 7, partTier(lv('magnet')));
+  if (lv('lucky') >= 1) P('clover', -22, -2, partTier(lv('lucky')));
+  if (lv('lucky') >= 2) P('clover', 22, -2, partTier(lv('lucky')));
+  if (lv('overcharge') >= 1) P('crown', 0, top + 8, partTier(lv('overcharge')));
   if (lv('overcharge') >= 2 && Math.floor(tick / 6) % 2) both('spark', 7, top + 4);
+  if (on('rapid')) { const spin = Math.floor(tick / 3) % 2; c.save(); c.translate(0, -2); if (spin) c.scale(-1, 1); P('gatling', 0, 0); c.restore(); }
+  // Automatic systems.
+  if (lv('missile')) { both('pod', 34, 2); if (lv('missile') >= 3) both('pod', 40, 10); }
+  if (lv('coil') || lv('arc')) { both('coil', 14, -12); if (lv('arc') >= 3) both('coil', 21, -14); }
+  for (let i = 0; i < Math.min(lv('zapper'), 3); i++) both('antenna', 3 + i * 5, top - 2 - i * 3);
+  if (lv('reactor')) { const pulse = 1 + (Math.floor(tick / 8) % 2) * 0.2; c.save(); c.translate(0, -4); c.scale(pulse, pulse); P('core', 0, 0); c.restore(); }
+  if (lv('medic')) { P('cross', -9, bot - 8); if (lv('medic') >= 2) P('cross', 9, bot - 8); }
+  if (lv('turret')) {
+    const ang = inRun && !preview && player && player.turretA !== undefined ? player.turretA + Math.PI / 2 : 0;
+    c.save(); c.translate(0, -12); c.rotate(ang);
+    c.fillStyle = GRAPHITE; c.fillRect(-2, -14, 4, 14);
+    if (lv('turret') >= 3) { c.fillRect(-6, -11, 3, 11); c.fillRect(3, -11, 3, 11); }
+    c.restore();
+    P('dome', 0, -12);
+  }
+  if (preview && lv('orbit')) for (let i = 0; i < Math.min(lv('orbit'), 6); i++) { const a = tick * 0.03 + i * TAU / Math.min(lv('orbit'), 6); drawOrbBlade(Math.cos(a) * 60, Math.sin(a) * 60, a); }
+  // Golden Pencil perks and prestige rank are always on show.
+  const pk = n => (save.perks && save.perks[n]) || 0;
+  if (pk('thick')) both('plate', 11, 2, 1);
+  if (pk('sharp')) P('tip', 0, top - 2);
+  if (pk('spare')) both('cell', 22, bot - 2, 1);
+  for (let i = 0; i < Math.min(save.prestiges || 0, 4); i++) both('star', 6 + i * 7, bot - 8);
   if (preview) {
-    const wing = lv('wingman') + SHIPS[sid].wingman;
-    [-52, 52, -92].slice(0, wing).forEach(dx => drawS(SPR_WING, dx, 8));
+    const wing = Math.min(lv('wingman'), 3);
+    [-52, 52, -92].slice(0, wing).forEach(dx => drawS(wingSprite(col), dx, 8));
   }
   c.restore();
 }
@@ -1960,7 +2199,7 @@ function drawWorld() {
     if (e.state === 'enter' && e.t < 0) return;
     if (e.sketch && e.state === 'enter') { drawSketch(e, fr); return; }
     drawS(SPR[e.type][fr], e.x, e.y, e.flash > 0);
-    if (e.maxHp > 1 && e.hp < e.maxHp) {
+    if (e.maxHp > 1 && e.hp < e.maxHp && e.type !== 'g') {
       c.fillStyle = GRAPHITE; c.fillRect(e.x - 15, e.y - e.h / 2 - 9, 30, 5);
       c.fillStyle = '#2fa84f'; c.fillRect(e.x - 14, e.y - e.h / 2 - 8, 28 * e.hp / e.maxHp, 3);
     }
@@ -1980,10 +2219,24 @@ function drawWorld() {
     });
   }
   drawWrecks();
+  zaps.forEach(z => {
+    c.strokeStyle = z.col; c.lineWidth = 2.5; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(z.x0, z.y0);
+    for (let i = 1; i < 5; i++) c.lineTo(z.x0 + (z.x1 - z.x0) * i / 5 + rand(-9, 9), z.y0 + (z.y1 - z.y0) * i / 5 + rand(-9, 9));
+    c.lineTo(z.x1, z.y1); c.stroke();
+  });
   if (eraser) drawEraser();
   // Player shots
   pBullets.forEach(b => {
     const bx = Math.round(b.x / 2) * 2, by = Math.round(b.y / 2) * 2;
+    if (b.home) {
+      c.save(); c.translate(bx, by); c.rotate(Math.atan2(b.vy, b.vx) + Math.PI / 2);
+      c.fillStyle = '#d0283c'; c.fillRect(-3, -8, 6, 14);
+      c.fillStyle = GRAPHITE; c.fillRect(-3, -10, 6, 4); c.fillRect(-5, 4, 10, 3);
+      c.fillStyle = '#f2b01e'; c.fillRect(-2, 7, 4, 3 + (tick % 3) * 2);
+      c.restore();
+      return;
+    }
     c.fillStyle = ink(b.color);
     c.fillRect(bx - 2, by - 8, 4, 16);
     c.fillStyle = GRAPHITE;
@@ -1992,10 +2245,16 @@ function drawWorld() {
   // Player
   if (!player.dead && !(player.inv > 0 && Math.floor(player.inv / 5) % 2 === 0)) {
     drawShip(player.x, player.y, player.vx);
-    if (stats.wingmen) [-46, 46, -84].slice(0, stats.wingmen).forEach((dx, i) => drawS(SPR_WING, player.x + dx, player.y + 10 + Math.sin(tick * 0.09 + i * 2) * 4));
+    if (stats.wingmen) [-46, 46, -84].slice(0, stats.wingmen).forEach((dx, i) => drawS(wingSprite(run.tint || 'blue'), player.x + dx, player.y + 10 + Math.sin(tick * 0.09 + i * 2) * 4));
     if (player.muzzle > 0) { c.fillStyle = '#f2b01e'; c.fillRect(player.x - 6, player.y - 34, 12, 8); c.fillStyle = '#e8791a'; c.fillRect(player.x - 2, player.y - 40, 4, 6); }
   }
-  if (!player.dead && player.shield) pixelRing(player.x, player.y, 36, '#3f6fc9', 0.75);
+  if (!player.dead && stats.orbit) {
+    for (let i = 0; i < stats.orbit; i++) {
+      const a = (player.orbA || 0) + i * TAU / stats.orbit;
+      drawOrbBlade(player.x + Math.cos(a) * 72, player.y - 8 + Math.sin(a) * 72, a);
+    }
+  }
+  if (!player.dead && player.shield) { pixelRing(player.x, player.y, 38, '#3f6fc9', 0.75); pixelRing(player.x, player.y, 32, '#9fdcf5', 0.5, 2); }
   // Enemy shots
   eBullets.forEach(b => {
     // Drawn larger than the hitbox so shots read clearly against the paper.
@@ -2039,18 +2298,18 @@ function drawHUD() {
   c.fillStyle = '#e9dfc4'; c.fillRect(0, 0, W, TOP);
   c.fillStyle = GRAPHITE; c.fillRect(0, TOP, W, 2);
   T('SCORE', 14, 12, 10, '#6b6456', 'left');
-  T(String(Math.round(shownScore)).padStart(7, '0'), 14, 30, 18, '#fff', 'left');
-  T(run.endless ? 'WAVE ' + run.stage : 'STAGE ' + run.stage + '/20', W / 2, 13, 12, SECTORS[sectorOf(run.stage)].line);
+  T(String(Math.round(shownScore)).padStart(5, '0'), 14, 30, 18, '#fff', 'left');
+  T(run.endless ? 'WAVE ' + run.stage : 'TUTORIAL ' + run.stage + '/' + TUTORIAL_LEN, W / 2, 13, 12, SECTORS[sectorOf(run.stage)].line);
   T(stageDef(run.stage).name, W / 2, 32, 12, '#fff');
   T('HIGH', 588, 12, 10, '#6b6456', 'right');
-  T(String(run.endless ? Math.max(save.hiEndless, run.score) : Math.max(save.hi, run.ranked ? run.score : 0)).padStart(7, '0'), 588, 30, 15, '#b8421c', 'right');
+  T(String(Math.max(save.hiEndless, run.endless ? run.score : 0)).padStart(5, '0'), 588, 30, 15, '#b8421c', 'right');
   // Pause button
   pencilBox(600, 9, 30, 28, '#a9a08a', 1, false);
   c.fillStyle = GRAPHITE; c.fillRect(609, 16, 4, 14); c.fillRect(617, 16, 4, 14);
   // Chain
   if (run.combo > 1) {
-    const m = mult(), col = m > 1 ? '#b8421c' : GRAPHITE;
-    T('CHAIN ' + run.combo + (m > 1 ? '  x' + m : ''), W / 2, TOP + 15, 13, col);
+    const col = run.combo >= 6 ? '#b8421c' : GRAPHITE;
+    T('CHAIN ' + run.combo, W / 2, TOP + 15, 13, col);
     c.fillStyle = 'rgba(43,38,32,.2)'; c.fillRect(W / 2 - 60, TOP + 25, 120, 4);
     c.fillStyle = col; c.fillRect(W / 2 - 60, TOP + 25, 120 * run.comboT / 170, 4);
   }
@@ -2065,15 +2324,17 @@ function drawHUD() {
     c.strokeStyle = GRAPHITE; c.lineWidth = 2; c.strokeRect(70, y, W - 140, 12);
   }
   // Lives
-  for (let i = 0; i < run.maxLives; i++) {
+  const shownLives = Math.min(run.maxLives, 8);
+  for (let i = 0; i < shownLives; i++) {
     const x = 18 + i * 25, y = H - 22;
-    if (i < run.lives) { c.save(); c.translate(x, y); c.scale(0.45, 0.45); drawS(SPR_SHIPS[run.ship || 'lancer'][0], 0, 0); c.restore(); }
+    if (i < run.lives) { c.save(); c.translate(x, y); c.scale(0.45, 0.45); drawS(shipSprites(run.ship || 'lancer', run.tint || 'blue')[0], 0, 0); c.restore(); }
     else { c.fillStyle = 'rgba(43,38,32,.3)'; c.fillRect(x - 6, y - 1, 12, 2); }
   }
+  if (run.maxLives > 8) T('x' + run.lives, 18 + 8 * 25, H - 21, 13, '#fff', 'left');
   // Nova
   const novaX = usedTouch ? 510 : W - 14;
-  T('NOVA' + (usedTouch ? '' : ' [X]'), novaX - run.novaMax * 18 - 8, H - 21, 11, '#56239e', 'right');
-  for (let i = 0; i < Math.max(run.novaMax, run.nova); i++) {
+  T('NOVA' + (usedTouch ? '' : ' [X]'), novaX - Math.min(8, run.novaMax) * 18 - 8, H - 21, 11, '#56239e', 'right');
+  for (let i = 0; i < Math.min(8, Math.max(run.novaMax, run.nova)); i++) {
     diamond(novaX - 6 - i * 18, H - 21, i < run.nova ? '#8a47d1' : 'rgba(43,38,32,.2)');
   }
   if (usedTouch) {
@@ -2095,10 +2356,10 @@ function drawHUD() {
 const boil = () => Math.floor(tick / 12) % 4;
 function drawButtons() {
   ui.forEach((b, i) => {
-    if (b.stage || b.upgrade || b.shipId) return;
+    if (b.stage || b.upgrade || b.shipId || b.tintId || b.perkId) return;
     const f = i === focus, on = b.sel && b.sel();
-    pencilBox(b.x, b.y, b.w, b.h, f ? '#f2b01e' : on ? '#8fd18f' : '#a9a08a', f ? 10 + boil() : b.y, f || on);
-    T(typeof b.label === 'function' ? b.label() : b.label, b.x + b.w / 2, b.y + b.h / 2, 16, '#fff');
+    pencilBox(b.x, b.y, b.w, b.h, !b.enabled ? '#d8d0ba' : f ? '#f2b01e' : on ? '#8fd18f' : '#a9a08a', f ? 10 + boil() : b.y, f || on);
+    T(typeof b.label === 'function' ? b.label() : b.label, b.x + b.w / 2, b.y + b.h / 2, 16, b.enabled ? '#fff' : '#8a8270');
   });
 }
 const STAR_ROWS = ['....x....', '....x....', '...xxx...', 'xxxxxxxxx', '.xxxxxxx.', '..xxxxx..', '..xxxxx..', '.xx...xx.', 'x.......x'];
@@ -2133,9 +2394,9 @@ function drawTitle() {
     drawS(SPR[t][Math.floor(tick / 18) % 2], x, y);
   });
   drawS(TITLE_SPR[Math.floor(tick / 14) % 2], W / 2, 190);
-  T('One ship. One living swarm. Twenty stages.', W / 2, 252, 16, '#fff');
-  if (save.hi > 0) T('HIGH SCORE  ' + save.hi, W / 2, 282, 14, '#b8421c');
-  if (save.hiEndless > 0) T('ENDLESS BEST  ' + save.hiEndless + '  -  WAVE ' + save.bestWave, W / 2, 302, 14, '#56239e');
+  T('One ship. One living swarm. No end in sight.', W / 2, 252, 16, '#fff');
+  if (save.hiEndless > 0) T('BEST  ' + save.hiEndless + '  -  WAVE ' + save.bestWave, W / 2, 288, 14, '#56239e');
+  T('Golden Pencils: ' + save.pencils + (save.prestiges ? '   Prestige ' + save.prestiges : ''), W / 2, 314, 14, '#b8421c');
   drawButtons();
   drawShip(W / 2 + Math.sin(tick * 0.02) * 190, 680, Math.cos(tick * 0.02) * 4);
   T('Arrows move  ·  Click fires  ·  X nova  ·  P pause  ·  M mute', W / 2, 736, 13, '#4a4438');
@@ -2148,21 +2409,57 @@ function drawOptions() {
 function drawShipSelect() {
   drawBackground(0, 0.6);
   c.globalAlpha = 0.5; c.fillStyle = PAPER; c.fillRect(0, 0, W, H); c.globalAlpha = 1;
-  T('CHOOSE YOUR SHIP', W / 2, 40, 30, '#2f7fd6');
+  T('STYLE YOUR SHIP', W / 2, 40, 30, '#2f7fd6');
   ui.forEach((b, i) => {
-    if (!b.shipId) return;
-    const f = i === focus, on = save.ship === b.shipId, d = SHIPS[b.shipId];
-    pencilBox(b.x, b.y, b.w, b.h, f ? '#f2b01e' : on ? '#8fd18f' : '#a9a08a', f ? 30 + boil() : b.x + b.y, f || on);
-    drawShip(b.x + 42, b.y + 58, 0, 1, b.shipId);
-    T(d.name, b.x + 82, b.y + 30, 16, '#fff', 'left');
-    T(d.lines[0], b.x + 82, b.y + 60, 12, '#fff', 'left');
-    T(d.lines[1], b.x + 82, b.y + 82, 12, '#4a4438', 'left');
-    if (on) T('SELECTED', b.x + 82, b.y + 106, 11, '#14703f', 'left');
+    const f = i === focus;
+    if (b.shipId) {
+      const on = save.ship === b.shipId;
+      pencilBox(b.x, b.y, b.w, b.h, f ? '#f2b01e' : on ? '#8fd18f' : '#a9a08a', f ? 30 + boil() : b.x + b.y, f || on);
+      drawShip(b.x + b.w / 2, b.y + 50, 0, 1, b.shipId, undefined, save.tint);
+      T(SHIPS[b.shipId].name, b.x + b.w / 2, b.y + 104, 14, '#fff');
+    } else if (b.tintId) {
+      const on = save.tint === b.tintId;
+      pencilBox(b.x, b.y, b.w, b.h, b.enabled ? COLORS[b.tintId] : '#c9c0a8', 50 + i + (f ? boil() : 0), true);
+      if (on) { c.fillStyle = PAPER; c.fillRect(b.x + b.w / 2 - 6, b.y + b.h / 2 - 6, 12, 12); }
+      if (f) { c.strokeStyle = '#f2b01e'; c.lineWidth = 3; c.strokeRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6); }
+      if (!b.enabled) T('SHOP', b.x + b.w / 2, b.y + b.h / 2, 10, '#4a4438');
+    }
   });
-  T('DIFFICULTY', W / 2, 360, 14, '#b8421c');
-  T(DIFFS[save.difficulty].desc, W / 2, 442, 13, '#4a4438');
+  T('DIFFICULTY', W / 2, 280, 14, '#b8421c');
+  T(DIFFS[save.difficulty].desc, W / 2, 358, 13, '#4a4438');
   drawButtons();
-  T(pending === 'endless' ? 'Endless mode: how far can you go?' : typeof pending === 'number' ? 'Starting at Stage ' + pending : 'New run from Stage 1', W / 2, 660, 13, '#4a4438');
+  drawShip(W / 2, 640, 0, 2, save.ship, {}, save.tint);
+}
+function drawShop() {
+  drawBackground(2, 0.5);
+  c.globalAlpha = 0.6; c.fillStyle = PAPER; c.fillRect(0, 0, W, H); c.globalAlpha = 1;
+  T('GOLDEN PENCILS', W / 2, 40, 30, '#b8421c');
+  T('You have ' + save.pencils + ' pencils', W / 2, 78, 15, '#2b2620');
+  ui.forEach((b, i) => {
+    if (!b.perkId) return;
+    const f = i === focus, k = PERKS[b.perkId], l = save.perks[b.perkId] || 0, maxed = l >= k.max, cost = k.cost(l), can = !maxed && save.pencils >= cost;
+    pencilBox(b.x, b.y, b.w, b.h, f ? '#f2b01e' : can ? '#8fd18f' : '#a9a08a', f ? 60 + boil() : b.y, f);
+    T(k.name, b.x + 16, b.y + 22, 16, '#fff', 'left');
+    T(k.desc, b.x + 16, b.y + 48, 12, '#4a4438', 'left');
+    T(maxed ? 'MAXED' : cost + ' PENCILS', b.x + b.w - 16, b.y + 22, 14, maxed ? '#14703f' : can ? '#b8421c' : '#6b6456', 'right');
+    T('LV ' + l + '/' + k.max, b.x + b.w - 16, b.y + 48, 12, '#4a4438', 'right');
+  });
+  drawButtons();
+}
+function drawConfirm() {
+  drawWorld(); dim(0.9);
+  T(confirmBox.text, W / 2, 270, 34, '#d0283c');
+  T(confirmBox.sub, W / 2, 330, 14, '#2b2620');
+  drawButtons();
+}
+function drawPrestige() {
+  drawBackground(2, 2);
+  T('PRESTIGE!', W / 2, 120, 56, '#b8421c');
+  T('You banked wave ' + run.stage, W / 2, 190, 16, '#fff');
+  drawShip(W / 2, 300, 0, 1.5, run.ship, run.up, run.tint);
+  T('+' + run.earned + ' Golden Pencils', W / 2, 400, 28, '#b8421c');
+  T('Prestige rank ' + save.prestiges + '  -  pencils +10% each rank', W / 2, 444, 13, '#4a4438');
+  drawButtons();
 }
 function drawHowTo() {
   drawBackground(0, 0.6);
@@ -2189,36 +2486,10 @@ function drawHowTo() {
     T(d.name, x + 18, y, 11, '#4a4438', 'left');
   });
   T('TIPS', L, 596, 14, '#b8421c', 'left');
-  ['Chain kills fast: every 6 raises your score multiplier, up to x8.', 'Aim for a boss\'s glowing core for double damage.', 'If the swarm reaches the dashed line, you lose a life.', 'Your shots pass through the crystal barriers. Theirs do not.', 'Pairs of upgrades can unlock a combo. Watch the cards!'].forEach((t, i) => {
+  ['Your score is simply how many enemies you have killed.', 'Aim for a boss\'s glowing core for double damage.', 'If the swarm reaches the dashed line, you lose a life.', 'Your shots pass through the crystal barriers. Theirs do not.', 'Dying ends a run. Prestige from wave 10 for full Golden Pencils.'].forEach((t, i) => {
     T(t, L, 614 + i * 15, 12, '#4a4438', 'left');
   });
   drawButtons();
-}
-function drawSelect() {
-  drawBackground(0, 0.6);
-  T('STAGE SELECT', W / 2, 44, 30, '#2f7fd6');
-  T('Later stages start with catch-up upgrades.', W / 2, 84, 13, '#4a4438');
-  T('Only runs from Stage 1 can set a high score.', W / 2, 104, 13, '#4a4438');
-  ui.forEach((b, i) => {
-    if (!b.stage) return;
-    const f = i === focus, s = SECTORS[sectorOf(b.stage)], isBoss = !!STAGES[b.stage].boss;
-    pencilBox(b.x, b.y, b.w, b.h, b.enabled ? s.neb : '#c9c0a8', f ? 40 + boil() : b.stage, f);
-    const cx = b.x + b.w / 2;
-    if (b.enabled) {
-      T(b.label, cx, b.y + 32, 26, '#fff');
-      if (isBoss) T('BOSS', cx, b.y + 60, 11, '#d0283c');
-      drawStars(cx, b.y + 84, save.stars[b.stage] || 0, 15);
-    } else {
-      c.fillStyle = '#6b6456';
-      c.fillRect(cx - 8, b.y + 30, 4, 14); c.fillRect(cx + 4, b.y + 30, 4, 14); c.fillRect(cx - 8, b.y + 28, 16, 4);
-      c.fillRect(cx - 14, b.y + 44, 28, 22);
-      c.fillStyle = PAPER; c.fillRect(cx - 2, b.y + 50, 4, 10);
-    }
-  });
-  const f = ui[focus];
-  drawButtons();
-  if (f && f.stage && f.enabled) T(STAGES[f.stage].name + '  -  ' + SECTORS[sectorOf(f.stage)].name, W / 2, 128, 14, '#b8421c');
-  else if (f && f.stage) T('Locked: clear Stage ' + (f.stage - 1) + ' to open it', W / 2, 128, 14, '#6b6456');
 }
 function dim(a) { c.globalAlpha = a; c.fillStyle = PAPER; c.fillRect(0, 0, W, H); c.globalAlpha = 1; }
 function drawClear() {
@@ -2227,15 +2498,15 @@ function drawClear() {
   T(stageLabel(run.stage) + ' CLEAR', W / 2, 150, 38, '#14703f');
   T(stageDef(run.stage).name, W / 2, 190, 16, '#fff');
   drawStars(W / 2, 250, s.stars, 44);
-  const rows = [['Clear bonus', s.clearB], ['Accuracy ' + Math.round(s.acc * 100) + '%', s.accB], ['Flawless bonus', s.flawB]];
+  const rows = [['Kills this wave', s.kills], ['Accuracy', Math.round(s.acc * 100) + '%'], ['Lives lost', s.hits]];
   rows.forEach((r, i) => {
     T(r[0], 130, 320 + i * 32, 16, '#fff', 'left');
-    T('+' + r[1], W - 130, 320 + i * 32, 16, r[1] ? '#b8421c' : '#8a8270', 'right');
+    T('' + r[1], W - 130, 320 + i * 32, 16, '#b8421c', 'right');
   });
   c.fillStyle = GRAPHITE; c.fillRect(130, 412, W - 260, 2);
   T('SCORE', 130, 440, 18, '#fff', 'left');
   T('' + run.score, W - 130, 440, 22, '#fff', 'right');
-  T(s.hits === 0 ? 'Flawless: no lives lost' : 'Lives lost: ' + s.hits, W / 2, 484, 13, '#4a4438');
+  if (s.hits === 0) T('Flawless: no lives lost', W / 2, 484, 13, '#4a4438');
   if (s.newHi) T('NEW HIGH SCORE!', W / 2, 516, 18, '#b8421c');
   else T('Stars: clear  ·  no damage  ·  50%+ accuracy', W / 2, 516, 12, '#6b6456');
   drawButtons();
@@ -2246,7 +2517,7 @@ function drawUpgrade() {
   T('Press 1, 2 or 3, or click a card', W / 2, 165, 14, '#4a4438');
   ui.forEach((b, i) => {
     const f = i === focus, id = b.upgrade;
-    const u = id === 'repair' ? { name: 'Field Repair', icon: '+', max: 1, desc: () => 'Repair one life and score 1000.' } : UPGRADES[id];
+    const u = id === 'repair' ? { name: 'Field Repair', icon: '+', max: 1, desc: () => 'Repair one lost life.' } : UPGRADES[id];
     const lv = run.up[id] || 0;
     pencilBox(b.x, b.y, b.w, b.h, f ? '#f2b01e' : '#a9a08a', f ? 20 + boil() : b.y, f);
     c.drawImage(orb('#2f7fd6', 22), b.x + 16, b.y + 26, 58, 58);
@@ -2254,26 +2525,26 @@ function drawUpgrade() {
     T(u.icon, b.x + 45, b.y + 55, 22, '#2b2620');
     T((i + 1) + '. ' + u.name, b.x + 92, b.y + 36, 19, '#fff', 'left');
     T(u.desc(lv), b.x + 92, b.y + 66, 14, '#fff', 'left');
-    if (id !== 'repair') for (let k = 0; k < u.max; k++) {
-      c.fillStyle = k < lv ? '#2f7fd6' : k === lv ? '#b8421c' : 'rgba(43,38,32,.2)';
-      c.fillRect(b.x + 92 + k * 20, b.y + 86, 16, 6);
-    }
+    if (id !== 'repair' && u.auto && !lv) T('NEW AUTO SYSTEM', b.x + 180, b.y + 90, 11, '#14703f', 'left');
+    if (id !== 'repair') T('LV ' + (lv + 1) + (u.max < Infinity ? ' of ' + u.max : ''), b.x + 92, b.y + 90, 11, '#b8421c', 'left');
     const combo = id !== 'repair' && comboFrom(id);
-    if (combo) T('UNLOCKS COMBO: ' + combo.name, b.x + 92 + u.max * 20 + 8, b.y + 89, 11, '#d61f6b', 'left');
+    if (combo) T('UNLOCKS COMBO: ' + combo.name, b.x + 180, b.y + 90, 11, '#d61f6b', 'left');
   });
   // Try-on preview: the ship as it would look with the highlighted upgrade.
   const pick = ui[focus] && ui[focus].upgrade, tryOn = Object.assign({}, run.up);
   if (pick && pick !== 'repair') tryOn[pick] = (tryOn[pick] || 0) + 1;
   T('Your ship with this upgrade', W / 2, 606, 13, '#4a4438');
-  drawShip(W / 2, 668, 0, 1.8, run.ship, tryOn);
+  drawShip(W / 2, 684, 0, 1.2, run.ship, tryOn, run.tint);
 }
 function drawGameOver() {
   drawWorld(); dim(0.88);
   T('SWARMED', W / 2, 190, 56, '#d0283c');
   T('You reached ' + stageLabel(run.stage) + ': ' + stageDef(run.stage).name, W / 2, 250, 16, '#fff');
   T('' + run.score, W / 2, 310, 40, '#fff');
-  T(run.newHi ? 'NEW HIGH SCORE!' : 'High score ' + (run.endless ? save.hiEndless : save.hi), W / 2, 358, 16, '#b8421c');
-  T(run.endless ? 'Best wave: ' + save.bestWave : 'Retry resets lives and score but keeps your upgrades', W / 2, 400, 12, '#4a4438');
+  if (run.endless) {
+    T((run.newHi ? 'NEW BEST!   ' : '') + '+' + run.earned + ' Golden Pencils', W / 2, 358, 16, '#b8421c');
+    T('Best wave: ' + save.bestWave + '.  Prestige from the pause menu to earn double.', W / 2, 400, 12, '#4a4438');
+  } else T('Retry keeps your tutorial upgrades', W / 2, 400, 12, '#4a4438');
   drawButtons();
 }
 function drawVictory() {
@@ -2281,24 +2552,25 @@ function drawVictory() {
   particles.forEach(p => { c.globalAlpha = clamp(p.life / p.max * 1.4, 0, 1); c.fillStyle = ink(p.color); const z = p.size > 3 ? 4 : 2; c.fillRect(Math.round(p.x / z) * z, Math.round(p.y / z) * z, z, z); });
   c.globalAlpha = 1;
   rings.forEach(r => pixelRing(r.x, r.y, r.r, ink(r.color), clamp(r.a, 0, 1)));
-  T('THE HIVE IS BROKEN', W / 2, 170, 40, '#b8421c');
-  T('All twenty stages cleared. Sector secure.', W / 2, 222, 16, '#fff');
-  drawShip(W / 2, 310 + Math.sin(tick * 0.05) * 8, 0, 2);
-  T('FINAL SCORE', W / 2, 410, 15, '#4a4438');
-  T('' + run.score, W / 2, 448, 44, '#fff');
-  let total = 0;
-  for (let i = 1; i <= 20; i++) total += save.stars[i] || 0;
-  T('Stars: ' + total + ' of 60', W / 2, 496, 15, '#b8421c');
+  T('TUTORIAL COMPLETE', W / 2, 150, 40, '#b8421c');
+  T('The real swarm is endless. How far can you go?', W / 2, 212, 16, '#fff');
+  drawShip(W / 2, 320 + Math.sin(tick * 0.05) * 8, 0, 2);
+  if (run.reward) T('+' + run.reward + ' Golden Pencils', W / 2, 440, 24, '#b8421c');
+  drawButtons();
+}
+function drawSettings() {
+  drawWorld(); dim(0.82);
+  T('SETTINGS', W / 2, 130, 44, '#2f7fd6');
   drawButtons();
 }
 function drawPause() {
   drawWorld(); dim(0.82);
-  T('PAUSED', W / 2, 170, 44, '#2f7fd6');
+  T('PAUSED', W / 2, 130, 44, '#2f7fd6');
   drawButtons();
   const names = COMBOS.filter(k => stats.combos[k.id]).map(k => k.name);
-  T('Ship: ' + shipDef().name + '  -  ' + diff().name, W / 2, 560, 13, '#4a4438');
-  if (names.length) T('Combos: ' + names.join(', '), W / 2, 584, 13, '#d61f6b');
-  drawShip(W / 2, 660, 0, 1.6, run.ship, run.up);
+  T(diff().name + ' difficulty  -  your run is saved every wave', W / 2, 568, 13, '#4a4438');
+  if (names.length) T('Combos: ' + names.join(', '), W / 2, 590, 13, '#d61f6b');
+  drawShip(W / 2, 680, 0, 1.15, run.ship, run.up, run.tint);
 }
 function render() {
   c.setTransform(renderScale, 0, 0, renderScale, 0, 0);
@@ -2308,8 +2580,11 @@ function render() {
     case 'title': drawTitle(); break;
     case 'options': drawOptions(); break;
     case 'ship': drawShipSelect(); break;
+    case 'shop': drawShop(); break;
+    case 'settings': drawSettings(); break;
+    case 'confirm': drawConfirm(); break;
+    case 'prestige': drawPrestige(); break;
     case 'howto': drawHowTo(); break;
-    case 'select': drawSelect(); break;
     case 'play': drawWorld(); break;
     case 'pause': drawPause(); break;
     case 'clear': drawClear(); break;
