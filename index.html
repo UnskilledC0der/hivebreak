@@ -26,7 +26,13 @@
 
 /* ==================== Setup ==================== */
 const W = 640, H = 760, STEP = 1000 / 60;
-const PLAYER_Y = 670, BREACH_Y = 625, TOP = 46;
+// The world grows in Endless. VW and VH are its size; the camera zooms out to fit it.
+let zoom = 1, VW = W, VH = H, PLAYER_Y = 670, BREACH_Y = 625, TOP = 46, BAR_Y = 560;
+const MIN_ZOOM = 0.6, MAX_VW = Math.ceil(W / MIN_ZOOM), MAX_VH = Math.ceil(H / MIN_ZOOM);
+function setWorld(z) {
+  zoom = z; VW = W / z; VH = H / z;
+  PLAYER_Y = VH - 90; BREACH_Y = VH - 135; TOP = 46 / z; BAR_Y = VH - 200;
+}
 const canvas = document.getElementById('g');
 const c = canvas.getContext('2d');
 const FONT = '"Menlo","Consolas","Courier New",monospace';
@@ -415,6 +421,7 @@ const PERKS = {
   spare: { name: 'Spare Nova', desc: '+1 starting Nova', max: 3, cost: l => 15 * (l + 1) },
   luck: { name: 'Lucky Sharpener', desc: 'Enemies drop pickups more often', max: 5, cost: l => 6 * (l + 1) },
   star: { name: 'Gold Star', desc: '+10% Golden Pencils', max: 10, cost: l => 5 * (l + 1) },
+  turrets: { name: 'Barricade Turrets', desc: 'Mounts auto-turrets on every barrier. Each level adds one', max: 3, cost: l => [250, 600, 1200][l] },
   goldpaint: { name: 'Gold Paint', desc: 'Unlocks the gold ship colour', max: 1, cost: () => 25 }
 };
 const perkLv = k => run && run.endless ? (save.perks[k] || 0) : 0;
@@ -423,7 +430,21 @@ function pencilsFor(wave, prestige) {
   const base = Math.max(1, Math.floor(Math.pow(wave, 1.3) / 3));
   return Math.round(base * (1 + save.prestiges * 0.1) * (prestige ? 1 : 0.5) * diff().score * (1 + perkLv('star') * 0.1)) || 1;
 }
-const TUNE = { stEarly: 0.3, stSlope: 0.07, earlyBoss: { 5: 0.6, 10: 0.35, 15: 0.3, 20: 0.2 }, bossSlow: 1.3, tierEvery: 15, ramp: 1.005, rampLate: 1.01, bossK: 0.015, early: 0.01 };
+const TUNE = { paceMob: 0.009, pacePlayer: 0.004, paceDmg: 0.018, lateBoss: 0.5, swarm: 2, stEarly: 0.3, stSlope: 0.07, earlyBoss: { 5: 0.6, 10: 0.35, 15: 0.3, 20: 0.2 }, bossSlow: 1.3, tierEvery: 15, ramp: 1.005, rampLate: 1.01, bossK: 0.015, early: 0.01 };
+// Pace: past wave 20, the swarm gets faster and the ship keeps up, so the climb speeds up
+// while the danger stays roughly level.
+const pastPace = () => run && run.endless ? Math.max(0, run.stage - 20) : 0;
+const mobPace = () => Math.min(2, 1 + pastPace() * TUNE.paceMob);
+const shipPace = () => Math.min(1.5, 1 + pastPace() * TUNE.pacePlayer);
+const dmgPace = () => 1 + pastPace() * TUNE.paceDmg;
+// Enemy toughness follows how fast you clear waves, so a strong ship can't erase
+// a wave before it fights back. Each wave nudges it up or down.
+const powerScale = () => (run && run.endless && run.hpBoost) || 1;
+function adaptToPower(stage, sec) {
+  if (!run.endless || stage <= 20 || stageDef(stage).boss) return;
+  const k = sec < 14 ? 1.15 : sec < 19 ? 1.06 : sec > 32 ? 0.88 : sec > 26 ? 0.95 : 1;
+  run.hpBoost = clamp((run.hpBoost || 1) * k, 1, 400);
+}
 const hpTier = n => 1 + Math.floor((n - 1) / TUNE.tierEvery);
 const endlessRamp = n => n <= 20 ? 1 : Math.pow(TUNE.ramp, n - 20) * (n > 100 ? Math.pow(TUNE.rampLate, n - 100) : 1);
 // Early waves toughen quickly, then this eases off as the long-term ramp takes over.
@@ -457,12 +478,13 @@ function endlessDef(n) {
     if (n >= 4) pool.push('v');
     if (n >= 6) pool.push('p');
     if (n >= 8) pool.push('h');
-    const rows = [], count = Math.min(2 + Math.floor(n / 4), 6);
+    const rows = [], count = Math.min(2 + Math.floor(n / 4), 6), cols = Math.max(10, Math.floor((VW - 120) / 52));
     for (let r = 0; r < count; r++) {
       const t = pick(pool), shape = pick(['full', 'full', 'gap', 'edges', 'alt']);
       let row = '';
-      for (let x = 0; x < 10; x++) {
-        const on = shape === 'full' || (shape === 'gap' && x !== 4 && x !== 5) || (shape === 'edges' && (x < 3 || x > 6)) || (shape === 'alt' && (x + r) % 2 === 0);
+      const mid = Math.floor(cols / 2);
+      for (let x = 0; x < cols; x++) {
+        const on = shape === 'full' || (shape === 'gap' && x !== mid && x !== mid - 1) || (shape === 'edges' && (x < 3 || x > cols - 4)) || (shape === 'alt' && (x + r) % 2 === 0);
         row += !on ? '.' : t === 'h' && x % 4 !== 1 ? 'd' : t;
       }
       rows.push(row);
@@ -470,7 +492,7 @@ function endlessDef(n) {
     def = { name: pick(WAVE_NAMES), rows };
     // Half the time, reuse one of the hand-built formations from the old campaign.
     const built = STAGES.filter((d, k) => d && d.rows && k <= n + 2);
-    if (Math.random() < 0.5 && built.length) def.rows = pick(built).rows;
+    if (Math.random() < 0.5 && built.length && cols <= 11) def.rows = pick(built).rows;
     if (n >= 6 && Math.random() < 0.3) def.mod = pick(Object.keys(MODS));
   }
   return (endlessCache[n] = def);
@@ -521,7 +543,7 @@ let wrecks = [], flip = null, bannerNext = null, curMod = null, eraser = null, s
 let note = null, noteQueue = [];
 let swarmLeft = 0, swarmT = 0, zaps = [], arcing = false, autoT = {};
 const mess = document.createElement('canvas');
-mess.width = W; mess.height = H;
+mess.width = MAX_VW; mess.height = MAX_VH;
 const messX = mess.getContext('2d');
 /* Leaves a lasting pencil smudge on this stage's page. */
 function smudge(x, y, color, amount) {
@@ -536,7 +558,7 @@ function smudge(x, y, color, amount) {
   messX.globalAlpha = 1;
 }
 const keys = {};
-const ptr = { x: W / 2, y: H / 2, down: false, offset: 0, touch: false };
+const ptr = { x: VW / 2, y: VH / 2, down: false, offset: 0, touch: false };
 
 function newRun(stage, ranked, endless) {
   const dk = DIFFS[save.difficulty] ? save.difficulty : 'normal';
@@ -559,16 +581,16 @@ function recalcStats() {
   // Early levels are big jumps; after that every level still helps, by less.
   const gl = lv('guns'), ol = lv('overcharge'), ll = lv('loader'), tl = lv('thrusters'), al = lv('aegis'), wl = lv('wingman');
   stats = {
-    speed: Math.min(11, 5.2 * Math.pow(1.15, Math.min(tl, 3)) * Math.pow(1.03, Math.max(0, tl - 3))),
-    cd: Math.max(4, 15 * Math.pow(0.82, Math.min(ll, 3)) * Math.pow(0.955, Math.max(0, ll - 3)) * Math.pow(0.96, perkLv('sharp'))),
+    speed: Math.min(14, 5.2 * Math.pow(1.15, Math.min(tl, 3)) * Math.pow(1.03, Math.max(0, tl - 3)) * shipPace()),
+    cd: Math.max(3, 15 * Math.pow(0.82, Math.min(ll, 3)) * Math.pow(0.955, Math.max(0, ll - 3)) * Math.pow(0.96, perkLv('sharp')) / shipPace()),
     guns: 1 + Math.min(gl, 3),
-    dmg: 1 + Math.min(ol, 2) + Math.max(0, ol - 2) * 0.6,
+    dmg: (1 + Math.min(ol, 2) + Math.max(0, ol - 2) * 0.6) * dmgPace(),
     pierce: Math.min(lv('pierce'), 6),
     wingmen: Math.min(wl + ship.wingman, 3), wingDmg: 1,
     magnet: lv('magnet'), luck: lv('lucky'),
-    shieldCd: al >= 1 ? Math.max(240, 1500 * Math.pow(0.6, al - 1)) : ship.shield ? 1800 : 0,
+    shieldCd: al >= 1 ? Math.max(900, 1500 * Math.pow(0.88, al - 1)) : ship.shield ? 1800 : 0,
     combos: {},
-    zapper: lv('zapper'), missile: lv('missile'), turret: lv('turret'), arc: Math.min(lv('arc'), 8), orbit: Math.min(lv('orbit'), 6), reactor: lv('reactor'), medic: lv('medic'),
+    zapper: lv('zapper'), missile: lv('missile'), turret: lv('turret'), arc: Math.min(lv('arc'), 8), orbit: Math.min(lv('orbit'), 4), reactor: lv('reactor'), medic: lv('medic'),
     // Past their early levels, automatic weapons keep gaining damage.
     missileX: 1 + Math.max(0, lv('missile') - 6) * 0.25, turretX: 1 + Math.max(0, lv('turret') - 5) * 0.25, arcX: 1 + Math.max(0, lv('arc') - 5) * 0.25, orbitX: 1 + Math.max(0, lv('orbit') - 4) * 0.25
   };
@@ -589,12 +611,20 @@ function applyUpgrade(id) {
   recalcStats();
   if (id === 'aegis' && player) player.shield = true;
 }
+let bunkers = [];
 function buildBarriers() {
-  barriers = [];
+  barriers = []; bunkers = [];
   const shape = ['..XXXX..', '.XXXXXX.', 'XXXXXXXX', 'XXX..XXX'];
-  [120, 320, 520].forEach(cx => shape.forEach((row, ry) => row.split('').forEach((ch, rx) => {
-    if (ch === 'X') barriers.push({ x: cx - 40 + rx * 10, y: 560 + ry * 10, hp: 3 });
-  })));
+  const n = Math.max(3, Math.round(VW / 213));
+  for (let k = 0; k < n; k++) {
+    const cx = VW * (k + 0.5) / n, cells = [];
+    shape.forEach((row, ry) => row.split('').forEach((ch, rx) => {
+      if (ch === 'X') { const cell = { x: cx - 40 + rx * 10, y: BAR_Y + ry * 10, hp: 3 }; barriers.push(cell); cells.push(cell); }
+    }));
+    bunkers.push({ x: cx, y: BAR_Y, cells, guns: [] });
+  }
+  const lv = perkLv('turrets');
+  bunkers.forEach(b => { for (let g = 0; g < lv; g++) b.guns.push({ dx: (g - (lv - 1) / 2) * 26, cd: rand(10, 60), a: -Math.PI / 2 }); });
 }
 function startFlip() {
   const o = document.createElement('canvas');
@@ -606,6 +636,8 @@ function startFlip() {
 function startStage(stage) {
   startFlip();
   run.stage = stage;
+  setWorld(run.endless ? clamp(1 - Math.max(0, stage - 25) * 0.0035, MIN_ZOOM, 1) : 1);
+  recalcStats();
   const snap = JSON.parse(JSON.stringify(run));
   delete snap.timers;
   delete snap.snap;
@@ -614,38 +646,39 @@ function startStage(stage) {
   persist();
   const old = player;
   player = {
-    x: old ? old.x : W / 2, y: PLAYER_Y, vx: 0, cd: 0, inv: 90, dead: false, deadT: 0,
+    x: old ? clamp(old.x, 20, VW - 20) : VW / 2, y: PLAYER_Y, vx: 0, cd: 0, inv: 90, dead: false, deadT: 0,
     shield: !!(run.up.aegis) || shipDef().shield, shieldT: 0, shot: 0
   };
   enemies = []; pBullets = []; eBullets = []; lasers = []; pickups = []; boss = null; moth = null;
   particles = []; rings = []; floaters = [];
   buildBarriers();
   wrecks = []; note = null; noteQueue = []; stageT = 0; eraser = null; zaps = []; autoT = {};
-  swarmLeft = run.endless ? Math.min(160, Math.max(0, Math.round((stage - 29) * 1.2))) : 0; swarmT = 220;
-  messX.clearRect(0, 0, W, H);
+  swarmLeft = run.endless ? Math.min(Math.round(160 * TUNE.swarm / (zoom * zoom)), Math.max(0, Math.round((stage - 29) * 1.2 * TUNE.swarm / zoom))) : 0; swarmT = 220;
+  messX.clearRect(0, 0, MAX_VW, MAX_VH);
   stageEnd = 0; fireT = 150; mothT = rand(500, 800); shake = 0; flash = 0; freeze = 0; slow = 0;
   summary = { hits: 0, shots: 0, landed: 0, kills: 0 };
   const def = stageDef(stage);
   curMod = def.mod || null;
-  if (curMod === 'eraser') eraser = { x: 80, y: 470, dir: 1 };
+  if (curMod === 'eraser') eraser = { x: 80, y: BAR_Y - 90, dir: 1 };
   form = null;
   if (def.boss) {
     const d = BOSS_DEFS[def.boss];
-    const bossHp = Math.round(d.hp * diff().hp * (run.endless ? bossRamp(stage) * (TUNE.earlyBoss[stage] || 1) : 1));
-    boss = { kind: d.kind, name: d.name, def: d, spr: d.spr, x: W / 2, y: -80, ty: 170, w: d.spr.w, h: d.spr.h,
+    const bossHp = Math.round(d.hp * diff().hp * (run.endless ? bossRamp(stage) * (TUNE.earlyBoss[stage] || 1) * (stage > 20 ? TUNE.lateBoss : 1) * Math.sqrt(powerScale()) : 1));
+    boss = { kind: d.kind, name: d.name, def: d, spr: d.spr, x: VW / 2, y: -80, ty: 170, w: d.spr.w, h: d.spr.h,
       hp: bossHp, maxHp: bossHp, dir: 1, speed: 1.3, t: 0, entering: true, dying: 0, flash: 0, hold: 0, phase: 1, spin: 0, nodes: [] };
     if (d.kind === 'warden') spawnNodes(10);
     banner = { text: 'WARNING', sub: d.name, t: 150, color: '#ff4d6a', max: 150 };
     // A small repair before every Endless boss, shown when it happens.
-    if (run.endless && run.lives < run.maxLives) { run.lives = Math.min(run.maxLives, run.lives + 2); floaters.push({ x: W / 2, y: 560, str: 'HULL PATCHED', color: '#14703f', size: 16, t: 120 }); }
+    if (run.endless && run.lives < run.maxLives) { run.lives = Math.min(run.maxLives, run.lives + 2); floaters.push({ x: VW / 2, y: 560, str: 'HULL PATCHED', color: '#14703f', size: 16, t: 120 }); }
     sfx('alarm'); setTimeout(() => sfx('alarm'), 700); setTimeout(() => sfx('alarm'), 1400);
   } else {
-    form = { x: (W - 9 * 52) / 2, y: 78, dir: 1, drop: 0 };
+    const cols = Math.max(...def.rows.map(r => r.length));
+    form = { x: (VW - (cols - 1) * 52) / 2, y: TOP + 32, dir: 1, drop: 0 };
     let i = 0;
     def.rows.forEach((row, ry) => row.split('').forEach((t, rx) => {
       if (t === '.') return;
       const side = rx < 5 ? -1 : 1;
-      enemies.push(makeEnemy(t, { gx: rx, gy: ry, state: 'enter', sketch: true, t: -i * 0.022 - ry * 0.05, sx: W / 2, sy: -60, swirl: side }));
+      enemies.push(makeEnemy(t, { gx: rx, gy: ry, state: 'enter', sketch: true, t: -i * 0.022 - ry * 0.05, sx: VW / 2, sy: -60, swirl: side }));
       i++;
     }));
     const m = curMod && MODS[curMod], bt = m ? 170 : 110;
@@ -660,7 +693,7 @@ function startStage(stage) {
 const sectorOf = s => Math.floor((s - 1) / 5) % 4;
 function makeEnemy(t, o) {
   // Each sector toughens the swarm so it keeps pace with the ship's upgrades.
-  const d = TYPES[t], s = SPR[t][0], hp = Math.max(1, Math.round(d.hp * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) * earlyHp(run.stage) : 1) * diff().hp));
+  const d = TYPES[t], s = SPR[t][0], hp = Math.max(1, Math.round(d.hp * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) * earlyHp(run.stage) * powerScale() : 1) * diff().hp));
   return Object.assign({ type: t, hp, maxHp: hp, x: o.sx || 0, y: o.sy || 0, w: s.w, h: s.h, flash: 0, dead: false, cool: rand(120, 420), phase: Math.random() * TAU }, o);
 }
 
@@ -859,7 +892,7 @@ function startBossDeath() {
 function aimAngle(x, y) { return Math.atan2(player.y - y, player.x - x); }
 function shootAt(x, y, ang, speed, color, r) {
   if (eBullets.length > 170) return;
-  speed *= diff().bullet;
+  speed *= diff().bullet * Math.sqrt(mobPace());
   eBullets.push({ x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, r: r || 4, color: color || '#ff5a7a' });
 }
 function fan(x, y, n, spread, speed, color, ang) {
@@ -908,7 +941,7 @@ function updateBoss() {
     b.x += b.dir * b.speed;
     // The Warden stays further from the walls so its orbiting nodes remain on screen.
     const margin = b.kind === 'warden' ? 140 : b.w / 2 + 14;
-    if (b.x < margin || b.x > W - margin) { b.dir *= -1; b.x = clamp(b.x, margin, W - margin); }
+    if (b.x < margin || b.x > VW - margin) { b.dir *= -1; b.x = clamp(b.x, margin, VW - margin); }
     b.y = b.ty + Math.sin(b.t * 0.025) * 16;
   }
   const slowBy = run.endless && run.stage <= 25 ? TUNE.bossSlow : 1;
@@ -936,7 +969,7 @@ function updateBoss() {
     if (every(p2 ? 200 : 250)) {
       b.hold = 110;
       addLaser(b.x, muz, 60, 42, 30);
-      if (p2) { addLaser(clamp(player.x - 130, 20, W - 20), TOP, 60, 42, 26); addLaser(clamp(player.x + 130, 20, W - 20), TOP, 60, 42, 26); }
+      if (p2) { addLaser(clamp(player.x - 130, 20, VW - 20), TOP, 60, 42, 26); addLaser(clamp(player.x + 130, 20, VW - 20), TOP, 60, 42, 26); }
     }
     if (every(62) && b.hold <= 0) fan(b.x, muz, p2 ? 3 : 1, 0.28, 3.6, col);
     if (every(p2 ? 150 : 200) && b.hold <= 0) ringShot(b.x, b.y, p2 ? 14 : 10, 2.6, '#ffb0a0', b.t * 0.07);
@@ -970,12 +1003,12 @@ function updateBoss() {
     }
     if (every(135)) fan(b.x, muz, 5 + b.phase * 2, 1.2, 3.1, '#ffb0d0');
     if (b.phase >= 2) {
-      if (every(210)) { b.hold = 95; addLaser(player.x, TOP, 58, 40, 28); addLaser(clamp(player.x + pick([-150, 150]), 20, W - 20), TOP, 58, 40, 28); }
+      if (every(210)) { b.hold = 95; addLaser(player.x, TOP, 58, 40, 28); addLaser(clamp(player.x + pick([-150, 150]), 20, VW - 20), TOP, 58, 40, 28); }
       if (every(340)) summon(3);
     }
     if (b.phase >= 3) {
       if (every(95)) ringShot(b.x, b.y, 18, 2.3, '#d59bff', b.t * 0.09);
-      if (every(260)) addLaser(rand(40, W - 40), TOP, 50, 90, 24, player.x > W / 2 ? 2 : -2);
+      if (every(260)) addLaser(rand(40, VW - 40), TOP, 50, 90, 24, player.x > VW / 2 ? 2 : -2);
     }
   }
 }
@@ -997,12 +1030,12 @@ function updateEnemies() {
   if (form && !def.boss) {
     const startCount = form.total || (form.total = alive);
     const ratio = alive / startCount;
-    const sp = (0.55 + st * 0.03) * (1 + (1 - ratio) * 2.2);
+    const sp = (0.55 + st * 0.03) * (1 + (1 - ratio) * 2.2) * mobPace();
     if (form.drop > 0) {
       const d = Math.min(1.8, form.drop); form.y += d; form.drop -= d;
     } else {
       const next = form.dir * sp;
-      if (alive && ((form.dir > 0 && maxX + next > W - 34) || (form.dir < 0 && minX + next < 34))) {
+      if (alive && ((form.dir > 0 && maxX + next > VW - 34) || (form.dir < 0 && minX + next < 34))) {
         form.dir *= -1; form.drop = 17;
       } else form.x += next;
     }
@@ -1011,7 +1044,7 @@ function updateEnemies() {
   if (!def.boss && !stageEnd && !player.dead) {
     fireT--;
     if (fireT <= 0) {
-      fireT = Math.max(run.stage > 150 ? 8 : 13, 62 - st * 2.3) * rand(0.6, 1.4) * diff().fire;
+      fireT = Math.max(run.stage > 150 ? 8 : 13, 62 - st * 2.3) * rand(0.6, 1.4) * diff().fire / mobPace();
       const low = {};
       const candidates = [];
       enemies.forEach(e => {
@@ -1020,7 +1053,7 @@ function updateEnemies() {
         if (e.type === 's') candidates.push(e);
       });
       Object.keys(low).forEach(k => candidates.push(low[k]));
-      if (candidates.length && eBullets.length < 9 + st) {
+      if (candidates.length && eBullets.length < (9 + st) * mobPace()) {
         const e = pick(candidates);
         const sp = 3.3 + st * 0.075;
         if (e.type === 's') { shootAt(e.x, e.y + 12, aimAngle(e.x, e.y + 12), sp, PAL.s.a, 4); e.flash = 4; }
@@ -1031,11 +1064,11 @@ function updateEnemies() {
   if (run.endless && swarmLeft > 0 && !stageEnd && !player.dead) {
     swarmT--;
     const gnats = enemies.filter(e => e.type === 'g').length;
-    if (swarmT <= 0 && gnats < 110) {
+    if (swarmT <= 0 && gnats < 110 * Math.sqrt(TUNE.swarm) / (zoom * zoom)) {
       swarmT = Math.max(18, 80 - run.stage * 0.4);
-      const n = Math.min(swarmLeft, 3 + Math.floor(run.stage / 18) + Math.floor(Math.random() * 4));
-      const side = Math.random() < 0.5 ? -20 : W + 20, startY = rand(70, 300);
-      const ghp = Math.max(1, Math.round(hpTier(run.stage) * endlessRamp(run.stage) * 0.22 * diff().hp));
+      const n = Math.min(swarmLeft, Math.round((3 + Math.floor(run.stage / 18) + Math.floor(Math.random() * 4)) * Math.sqrt(TUNE.swarm)));
+      const side = Math.random() < 0.5 ? -20 : VW + 20, startY = rand(70, 300);
+      const ghp = Math.max(1, Math.round(hpTier(run.stage) * endlessRamp(run.stage) * 0.22 * powerScale() * diff().hp));
       for (let i = 0; i < n; i++) {
         const g = makeEnemy('g', { sx: side, sy: startY, x: side + rand(-30, 30), y: startY + rand(-30, 30), state: 'gnat', vx: 0, vy: 0, seed: Math.random() * TAU, dive: 0 });
         g.hp = g.maxHp = ghp;
@@ -1046,6 +1079,7 @@ function updateEnemies() {
     }
   }
   let breached = false;
+  let gnatDivers = enemies.filter(e => e.type === 'g' && e.dive > 0).length;
   enemies.forEach(e => {
     if (e.dead) return;
     if (e.flash > 0) e.flash--;
@@ -1053,7 +1087,7 @@ function updateEnemies() {
     const tx = form ? form.x + e.gx * 52 : e.x;
     const ty = form ? form.y + e.gy * 40 : e.y;
     if (e.state === 'enter' && e.sketch) {
-      e.t += 0.024;
+      e.t += 0.024 * mobPace();
       if (e.t >= 0) { e.x = tx; e.y = ty; } else { e.x = tx; e.y = -60; }
       if (e.t >= 1) { e.state = 'form'; e.cool = rand(60, 460); }
     } else if (e.state === 'enter') {
@@ -1087,36 +1121,38 @@ function updateEnemies() {
       }
     } else if (e.state === 'dive') {
       e.t++;
-      const vy = 3 + st * 0.06;
+      const vy = (3 + st * 0.06) * mobPace();
       e.vx += clamp(player.x - e.x, -1, 1) * 0.09;
       e.vx = clamp(e.vx, -3, 3);
       e.x += e.vx + Math.sin(e.t * 0.08) * 1.4;
       e.y += vy;
       if (!e.fired && e.y > 260) { e.fired = true; shootAt(e.x, e.y + 10, aimAngle(e.x, e.y), 3.8, PAL.v.a); }
-      if (e.y > H + 30) { e.state = 'enter'; e.sketch = false; e.t = 0; e.sx = rand(60, W - 60); e.sy = -40; e.swirl = rand(-50, 50); e.cool = rand(200, 520); }
+      if (e.y > VH + 30) { e.state = 'enter'; e.sketch = false; e.t = 0; e.sx = rand(60, VW - 60); e.sy = -40; e.swirl = rand(-50, 50); e.cool = rand(200, 520); }
     } else if (e.state === 'gnat') {
-      // Each gnat circles the ship on its own path, so together they flock.
-      const a = e.phase * 0.6 + e.seed;
-      let gx = player.x + Math.cos(a) * (140 + e.seed * 16), gy = 270 + Math.sin(a * 1.3) * 140;
-      if (e.dive > 0) { e.dive--; gx = player.x; gy = player.y + 70; }
-      else if (Math.random() < 0.0018) e.dive = 80;
-      e.vx = clamp(e.vx + clamp(gx - e.x, -1, 1) * 0.34 + rand(-0.25, 0.25), -4.2, 4.2);
-      e.vy = clamp(e.vy + clamp(gy - e.y, -1, 1) * 0.28 + rand(-0.25, 0.25), -3.4, 3.8);
+      // Gnats hunt the ship: each circles it, and the circle slowly tightens until the cloud hangs just overhead.
+      e.age = (e.age || 0) + 1;
+      const a = e.phase * 0.6 + e.seed, reach = Math.max(95, 300 - e.age * 0.3) * (0.8 + e.seed * 0.06);
+      let gx = player.x + Math.cos(a) * reach, gy = player.y - 165 + Math.sin(a * 1.3) * reach * 0.45;
+      if (e.dive > 0) { e.dive--; gx = player.x + Math.sin(e.seed) * 12; gy = player.y; }
+      else if (gnatDivers < 2 + Math.floor(pastPace() / 25) && Math.random() < (e.age > 600 ? 0.0026 : 0.0014)) { e.dive = 60; gnatDivers++; }
+      const speed = (1.7 + Math.min(1.4, e.age / 900)) * mobPace();
+      e.vx = clamp(e.vx + clamp(gx - e.x, -1, 1) * 0.22 + rand(-0.25, 0.25), -speed * 1.3, speed * 1.3);
+      e.vy = clamp(e.vy + clamp(gy - e.y, -1, 1) * 0.18 + rand(-0.25, 0.25), -speed, speed);
       e.x += e.vx; e.y += e.vy;
-      if (e.y > H + 20) { e.y = 60; e.dive = 0; e.vy = 0; }
+      if (e.y > PLAYER_Y + 40) { e.y = PLAYER_Y + 40; e.vy = -Math.abs(e.vy); e.dive = 0; }
       if (Math.random() < 0.0009 && eBullets.length < 90) shootAt(e.x, e.y + 8, Math.PI / 2, 3.4, PAL.g.b);
     } else if (e.state === 'free') {
       e.t++;
       e.x += e.side * Math.max(0, 2.6 - e.t * 0.06);
       if (e.t > 24) e.x += clamp(player.x - e.x, -1.2, 1.2);
-      e.y += 2.1 + st * 0.04;
-      if (e.y > H + 30) e.dead = true;
+      e.y += (2.1 + st * 0.04) * mobPace();
+      if (e.y > VH + 30) e.dead = true;
     }
     if (e.state !== 'enter' && !player.dead && Math.abs(e.x - player.x) < (e.w / 2 + 12) && Math.abs(e.y - player.y) < (e.h / 2 + 14)) {
       hitPlayer(false); damageEnemy(e, e.hp);
     }
     // Enemies grind away barriers they touch.
-    if (e.y + e.h / 2 > 556 && e.state !== 'enter') barriers.forEach(k => {
+    if (e.y + e.h / 2 > BAR_Y - 4 && e.state !== 'enter') barriers.forEach(k => {
       if (k.hp > 0 && Math.abs(k.x + 5 - e.x) < e.w / 2 + 5 && Math.abs(k.y + 5 - e.y) < e.h / 2 + 5) k.hp = 0;
     });
   });
@@ -1142,8 +1178,8 @@ function updatePlayer() {
   if (keys.ArrowRight || keys.KeyD) dx += 1;
   let vx = 0;
   if (dx) vx = dx * stats.speed;
-  else if (ptr.down && ptr.touch) vx = clamp(ptr.x + ptr.offset - p.x, -stats.speed * 2, stats.speed * 2);
-  p.x = clamp(p.x + vx, 20, W - 20);
+  else if (ptr.down && ptr.touch) vx = clamp(ptr.x / zoom + ptr.offset - p.x, -stats.speed * 2, stats.speed * 2);
+  p.x = clamp(p.x + vx, 20, VW - 20);
   p.vx += (vx - p.vx) * 0.25;
   if (p.inv > 0) p.inv--;
   if (p.cd > 0) p.cd--;
@@ -1171,14 +1207,14 @@ let enemyIdSeq = 1;
 const RIP = { half: 24, top: 250, bottom: 545 };
 const windNow = () => curMod === 'wind' ? Math.sin(tick * 0.012) * 1.7 : 0;
 function inRip(b) {
-  if (curMod !== 'torn' || Math.abs(b.x - W / 2) > RIP.half || b.y < RIP.top || b.y > RIP.bottom) return false;
+  if (curMod !== 'torn' || Math.abs(b.x - VW / 2) > RIP.half || b.y < RIP.top || b.y > RIP.bottom) return false;
   fxAdd.shavings(b.x, b.y, 2);
   return true;
 }
 function updateEraser() {
   if (!eraser) return;
   eraser.x += eraser.dir * 2.3;
-  if (eraser.x < 60 || eraser.x > W - 60) eraser.dir *= -1;
+  if (eraser.x < 60 || eraser.x > VW - 60) eraser.dir *= -1;
   const inside = b => Math.abs(b.x - eraser.x) < 48 && Math.abs(b.y - eraser.y) < 26;
   eBullets = eBullets.filter(b => { if (inside(b)) { fxAdd.shavings(b.x, b.y, 2); return false; } return true; });
   pBullets = pBullets.filter(b => !inside(b));
@@ -1201,14 +1237,14 @@ function updateTutorial() {
   if (run.stage === 1) {
     if (stageT === 60) teach('move', usedTouch ? 'Drag your finger to move' : 'Arrow keys move your ship', ship);
     if (stageT === 90) teach('fire', usedTouch ? 'Touching the screen fires' : 'Click to fire. Hold to keep firing', ship);
-    if (summary.kills >= 3) teach('chain', 'Quick kills build a score chain', () => ({ x: W / 2, y: TOP + 30 }));
-    if (stageT === 700) teach('line', 'If they reach this line, you lose a life', () => ({ x: W / 2, y: BREACH_Y }));
+    if (summary.kills >= 3) teach('chain', 'Quick kills build a score chain', () => ({ x: VW / 2, y: TOP + 30 }));
+    if (stageT === 700) teach('line', 'If they reach this line, you lose a life', () => ({ x: VW / 2, y: BREACH_Y }));
   } else if (run.stage === 2) {
     if (stageT === 60) { const a = enemies.find(e => e.type === 's'); if (a) teach('wasp', 'Wasps aim right at you. Keep moving!', () => (a.dead ? ship() : { x: a.x, y: a.y + 22 })); }
-    if (stageT === 90) teach('barrier', 'Barriers stop their shots, not yours', () => ({ x: W / 2, y: 556 }));
-    if (stageT === 360 && !save.notesSeen.pickup) dropPickup(W / 2, 120, 'spread');
+    if (stageT === 90) teach('barrier', 'Barriers stop their shots, not yours', () => ({ x: VW / 2, y: 556 }));
+    if (stageT === 360 && !save.notesSeen.pickup) dropPickup(VW / 2, 120, 'spread');
   } else {
-    if (stageT === 60) teach('nova', 'X fires your Nova. It clears all shots', () => ({ x: W - 40, y: H - 36 }));
+    if (stageT === 60) teach('nova', 'X fires your Nova. It clears all shots', () => ({ x: VW - 40, y: VH - 36 }));
     if (stageT === 90) { const a = enemies.find(e => e.type === 'a'); if (a) teach('shell', 'Shellbacks need several hits', () => (a.dead ? ship() : { x: a.x, y: a.y + 22 })); }
   }
 }
@@ -1227,8 +1263,24 @@ function nearestTarget(x, y) {
 }
 const autoBullet = (x, y, ang, sp, dmg, color, extra) => pBullets.push(Object.assign({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, dmg, pierce: 0, hits: null, counted: true, color }, extra));
 const due = (k, cd) => { autoT[k] = (autoT[k] || 0) - 1; if (autoT[k] <= 0) { autoT[k] = cd; return true; } return false; };
+function updateBunkerGuns() {
+  if (!bunkers.length || player.dead || stageEnd) return;
+  bunkers.forEach(b => {
+    if (!b.guns.length || !b.cells.some(k => k.hp > 0)) return;
+    b.guns.forEach(g => {
+      g.cd--;
+      if (g.cd > 0) return;
+      const x = b.x + g.dx, y = b.y - 8, t = nearestTarget(x, y);
+      if (!t || Math.hypot(t.x - x, t.y - y) > 700) { g.cd = 8; return; }
+      g.a = Math.atan2(t.y - y, t.x - x);
+      g.cd = Math.max(14, 42 - perkLv('turrets') * 7);
+      autoBullet(x + Math.cos(g.a) * 12, y + Math.sin(g.a) * 12, g.a, 11, Math.max(1, stats.dmg * 0.9), '#b8421c');
+    });
+  });
+}
 function updateAutos() {
   const p = player, s = stats;
+  updateBunkerGuns();
   if (p.dead || stageEnd) return;
   if (s.missile && due('missile', Math.max(32, 96 - s.missile * 11))) {
     [-1, 1].slice(0, s.missile >= 3 ? 2 : 1).forEach(dir => {
@@ -1240,8 +1292,8 @@ function updateAutos() {
     const t = nearestTarget(p.x, p.y - 12);
     if (t) { p.turretA = Math.atan2(t.y - (p.y - 12), t.x - p.x); autoBullet(p.x, p.y - 12, p.turretA, 12, s.dmg * s.turretX, '#14a79a'); }
   }
-  if (s.zapper && due('zapper', Math.max(22, 90 - s.zapper * 14))) {
-    eBullets.filter(b => Math.hypot(b.x - p.x, b.y - p.y) < 190).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)).slice(0, s.zapper).forEach(b => {
+  if (s.zapper && due('zapper', Math.max(40, 90 / (1 + (s.zapper - 1) * 0.25)))) {
+    eBullets.filter(b => Math.hypot(b.x - p.x, b.y - p.y) < 190).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)).slice(0, Math.min(3, s.zapper)).forEach(b => {
       zaps.push({ x0: p.x, y0: p.y - 20, x1: b.x, y1: b.y, t: 7, col: '#d9a400' });
       b.dead = true;
     });
@@ -1258,7 +1310,7 @@ function updateAutos() {
     }
   }
   if (s.reactor && due('reactor', Math.max(600, 2100 - s.reactor * 350)) && run.nova < run.novaMax + 1) { run.nova++; fxAdd.text(p.x, p.y - 34, '+1 NOVA', '#d59bff', 14); }
-  if (s.medic && due('medic', Math.max(1200, 3400 - s.medic * 500)) && run.lives < run.maxLives) { run.lives++; sfx('pickup'); fxAdd.text(p.x, p.y - 40, 'REPAIRED +1', '#7dff9a', 14); }
+  if (s.medic && due('medic', Math.max(2400, 3400 - s.medic * 250)) && run.lives < run.maxLives) { run.lives++; sfx('pickup'); fxAdd.text(p.x, p.y - 40, 'REPAIRED +1', '#7dff9a', 14); }
 }
 function updatePlayerBullets() {
   pBullets.forEach(b => {
@@ -1274,7 +1326,7 @@ function updatePlayerBullets() {
       }
     }
     b.x += b.vx + windNow(); b.y += b.vy;
-    if (b.y < TOP - 10 || b.x < -10 || b.x > W + 10 || inRip(b)) { b.dead = true; return; }
+    if (b.y < TOP - 10 || b.x < -10 || b.x > VW + 10 || inRip(b)) { b.dead = true; return; }
     if (moth && Math.abs(b.x - moth.x) < 32 && Math.abs(b.y - moth.y) < 14) {
       moth.hp -= b.dmg; moth.flash = 4; fxAdd.burst(b.x, b.y, '#ffe066', 4, 2, 16);
       bulletTryHit(b, 'moth');
@@ -1317,8 +1369,8 @@ function updateEnemyBullets() {
   const p = player;
   eBullets.forEach(b => {
     b.x += b.vx + windNow(); b.y += b.vy;
-    if (b.y > H + 10 || b.y < 0 || b.x < -10 || b.x > W + 10 || inRip(b)) { b.dead = true; return; }
-    if (b.y > 555 && b.y < 605) {
+    if (b.y > VH + 10 || b.y < 0 || b.x < -10 || b.x > VW + 10 || inRip(b)) { b.dead = true; return; }
+    if (b.y > BAR_Y - 5 && b.y < BAR_Y + 45) {
       for (const k of barriers) {
         if (k.hp > 0 && b.x > k.x - 2 && b.x < k.x + 12 && b.y > k.y - 2 && b.y < k.y + 12) {
           k.hp--; b.dead = true;
@@ -1344,8 +1396,8 @@ function updateLasers() {
     }
     l.dur--;
     l.x += l.vx;
-    if (l.x < 12 || l.x > W - 12) l.vx *= -1;
-    if (tick % 2 === 0) fxAdd.burst(l.x + rand(-l.w / 2, l.w / 2), rand(l.y0, H), '#ffb0a0', 1, 2, 14);
+    if (l.x < 12 || l.x > VW - 12) l.vx *= -1;
+    if (tick % 2 === 0) fxAdd.burst(l.x + rand(-l.w / 2, l.w / 2), rand(l.y0, VH), '#ffb0a0', 1, 2, 14);
     barriers.forEach(k => { if (k.hp > 0 && Math.abs(k.x + 5 - l.x) < l.w / 2 + 5) k.hp = 0; });
     if (!player.dead && Math.abs(player.x - l.x) < l.w / 2 + 5) hitPlayer(false);
     return l.dur > 0;
@@ -1364,22 +1416,22 @@ function updatePickups() {
       p.y += (player.y - p.y) / d * force;
     }
     if (!player.dead && Math.abs(p.x - player.x) < 30 && Math.abs(p.y - player.y) < 30) { collect(p); return false; }
-    return p.y < H + 20;
+    return p.y < VH + 20;
   });
 }
 function updateMoth() {
   if (stageDef(run.stage).boss || stageEnd) return;
   if (moth) {
     moth.x += moth.vx; moth.t++;
-    moth.y = 62 + Math.sin(moth.t * 0.09) * 8;
+    moth.y = TOP + 16 + Math.sin(moth.t * 0.09) * 8;
     if (moth.flash > 0) moth.flash--;
     if (moth.t % 150 === 0) fan(moth.x, moth.y, 1, 0, 3.2, '#ffe066', Math.PI / 2);
-    if (moth.x < -40 || moth.x > W + 40) moth = null;
+    if (moth.x < -40 || moth.x > VW + 40) moth = null;
   } else if (enemies.length) {
     mothT--;
     if (mothT <= 0) {
       const left = Math.random() < 0.5;
-      moth = { x: left ? -30 : W + 30, y: 62, vx: left ? 2.3 : -2.3, hp: 4, t: 0, flash: 0 };
+      moth = { x: left ? -30 : VW + 30, y: TOP + 16, vx: left ? 2.3 : -2.3, hp: 4, t: 0, flash: 0 };
       mothT = rand(800, 1300);
       tone({ type: 'sine', f0: 900, f1: 1200, dur: 0.25, vol: 0.07 });
     }
@@ -1450,6 +1502,7 @@ function step() {
 
 /* ==================== Flow ==================== */
 function finishStage() {
+  adaptToPower(run.stage, stageT / 60);
   note = null; noteQueue = [];
   const s = summary, stage = run.stage;
   const acc = s.shots ? s.landed / s.shots : 0;
@@ -1474,7 +1527,7 @@ function afterClear() {
     setMode('victory');
     return;
   }
-  if (run.endless ? run.stage % 5 === 0 : run.stage % 2 === 0 || run.stage % 5 === 0) { rollUpgrades(); setMode('upgrade'); }
+  if (run.endless ? run.stage % 5 === 0 || (run.stage > 25 && run.stage % 2 === 0) : run.stage % 2 === 0 || run.stage % 5 === 0) { rollUpgrades(); setMode('upgrade'); }
   else startStage(run.stage + 1);
 }
 function rollUpgrades() {
@@ -1576,8 +1629,8 @@ function setMode(m) {
     focus = ui.length - 2;
     uiBack = ui[ui.length - 1].onClick;
   } else if (m === 'shop') {
-    Object.keys(PERKS).forEach((id, i) => ui.push(btn(40, 98 + i * 76, W - 80, 68, '', () => buyPerk(id), { perkId: id })));
-    ui.push(btn(bx, 636, bw, 44, 'BACK', () => setMode(returnTo)));
+    Object.keys(PERKS).forEach((id, i) => ui.push(btn(40, 92 + i * 66, W - 80, 60, '', () => buyPerk(id), { perkId: id })));
+    ui.push(btn(bx, 632, bw, 44, 'BACK', () => setMode(returnTo)));
     focus = ui.length - 1;
     uiBack = ui[ui.length - 1].onClick;
   } else if (m === 'confirm') {
@@ -1686,7 +1739,7 @@ canvas.addEventListener('pointerdown', e => {
     ptr.down = true;
     // Mouse clicks only fire. Touch has no arrow keys, so dragging also steers.
     ptr.touch = e.pointerType === 'touch';
-    ptr.offset = ptr.touch && player ? player.x - p.x : 0;
+    ptr.offset = ptr.touch && player ? player.x - p.x / zoom : 0;
     return;
   }
   if (uiLock > 0) return;
@@ -1855,7 +1908,7 @@ function drawRip() {
     trace(left, right); x.fillStyle = '#2e241c'; x.fill();
     x.strokeStyle = GRAPHITE; x.lineWidth = 1.2; x.stroke();
   }
-  c.drawImage(ripCanvas, W / 2 - ripCanvas.width / 4, RIP.top - 30, ripCanvas.width / 2, ripCanvas.height / 2);
+  c.drawImage(ripCanvas, VW / 2 - ripCanvas.width / 4, RIP.top - 30, ripCanvas.width / 2, ripCanvas.height / 2);
 }
 function drawEraser() {
   const x = Math.round(eraser.x), y = eraser.y;
@@ -1866,7 +1919,7 @@ function drawWind() {
   const dir = Math.sin(tick * 0.012) > 0 ? 1 : -1;
   c.globalAlpha = 0.5; c.strokeStyle = GRAPHITE; c.lineWidth = 2; c.lineCap = 'round';
   for (let i = 0; i < 7; i++) {
-    const y = 120 + i * 62, x = ((i * 137 + tick * 2.2 * dir) % (W + 120) + W + 120) % (W + 120) - 60;
+    const y = 120 + i * 62, x = ((i * 137 + tick * 2.2 * dir) % (VW + 120) + VW + 120) % (VW + 120) - 60;
     c.beginPath(); c.moveTo(x - 24, y); c.quadraticCurveTo(x, y - 8, x + 24, y); c.stroke();
     c.beginPath(); c.moveTo(x + 24 * dir, y); c.lineTo(x + 14 * dir, y - 6); c.moveTo(x + 24 * dir, y); c.lineTo(x + 14 * dir, y + 6); c.stroke();
   }
@@ -1875,7 +1928,7 @@ function drawWind() {
 let darkCanvas = null, darkHole = null;
 function drawDark() {
   if (!darkCanvas) {
-    darkCanvas = document.createElement('canvas'); darkCanvas.width = W; darkCanvas.height = H;
+    darkCanvas = document.createElement('canvas'); darkCanvas.width = MAX_VW; darkCanvas.height = MAX_VH;
     darkHole = document.createElement('canvas'); darkHole.width = darkHole.height = 360;
     const x = darkHole.getContext('2d'), cell = 10;
     for (let cy = 0; cy < 360; cy += cell) for (let cx = 0; cx < 360; cx += cell) {
@@ -1886,19 +1939,19 @@ function drawDark() {
   }
   const x = darkCanvas.getContext('2d');
   x.globalCompositeOperation = 'source-over';
-  x.clearRect(0, 0, W, H);
-  x.fillStyle = '#1c1814'; x.fillRect(0, 0, W, H);
-  x.fillStyle = hatch('#5a5244'); x.fillRect(0, 0, W, H);
+  x.clearRect(0, 0, VW, VH);
+  x.fillStyle = '#1c1814'; x.fillRect(0, 0, VW, VH);
+  x.fillStyle = hatch('#5a5244'); x.fillRect(0, 0, VW, VH);
   x.globalCompositeOperation = 'destination-out';
   x.drawImage(darkHole, Math.round(player.x) - 180, Math.round(player.y) - 180);
-  c.drawImage(darkCanvas, 0, 0, W, H);
+  c.drawImage(darkCanvas, 0, 0, VW, VH, 0, 0, VW, VH);
   // Enemy shots stay visible on top, so the darkness never makes a hit unfair.
   eBullets.forEach(b => c.drawImage(orb(b.color, 6), Math.round(b.x - 13), Math.round(b.y - 13), 26, 26));
 }
 function drawNote() {
   if (!note) return;
   const a = Math.min(1, Math.min(note.t, note.max - note.t) / 14);
-  const w = note.text.length * 9 + 56, h = 40, x = clamp(W / 2 - w / 2, 8, W - w - 8), y = 470;
+  const w = note.text.length * 9 + 56, h = 40, x = clamp(VW / 2 - w / 2, 8, VW - w - 8), y = 470;
   const tg = note.target();
   c.globalAlpha = a;
   // Wobbly arrow from the note to what it's talking about.
@@ -2145,7 +2198,8 @@ function drawWorld() {
   drawBackground(sec, mode === 'play' && stageEnd ? 3 : 1);
   c.save();
   if (shake > 0) c.translate(Math.round((Math.random() - 0.5) * shake), Math.round((Math.random() - 0.5) * shake));
-  c.drawImage(mess, 0, 0, W, H);
+  c.scale(zoom, zoom);
+  c.drawImage(mess, 0, 0, VW, VH, 0, 0, VW, VH);
   if (curMod === 'torn') drawRip();
   if (curMod === 'wind') drawWind();
 
@@ -2155,13 +2209,24 @@ function drawWorld() {
     const danger = clamp((low - 400) / (BREACH_Y - 400), 0, 1);
     c.globalAlpha = 0.45 + danger * 0.5 * (0.6 + 0.4 * Math.sin(tick * 0.2));
     c.fillStyle = danger > 0.5 || breachFlash > 0 ? '#d0283c' : SECTORS[sec].line;
-    for (let dx = 0; dx < W; dx += 16) c.fillRect(dx, BREACH_Y - 1, 8, 2);
+    for (let dx = 0; dx < VW; dx += 16) c.fillRect(dx, BREACH_Y - 1, 8, 2);
     c.globalAlpha = 1;
   }
   // Barriers
   barriers.forEach((k, i) => {
     if (k.hp <= 0) return;
     c.drawImage(BARRIER_IMG[k.hp][i % 4], k.x - 1, k.y - 1, 12, 12);
+  });
+  // Barricade turrets.
+  bunkers.forEach(b => {
+    if (!b.guns.length || !b.cells.some(k => k.hp > 0)) return;
+    b.guns.forEach(g => {
+      const x = b.x + g.dx, y = b.y - 8;
+      c.save(); c.translate(x, y); c.rotate(g.a + Math.PI / 2);
+      c.fillStyle = GRAPHITE; c.fillRect(-3, -18, 6, 16); c.fillStyle = '#b8421c'; c.fillRect(-2, -20, 4, 4);
+      c.restore();
+      drawS(partSprites('dome', perkLv('turrets') >= 3 ? 1 : 0)[Math.floor(tick / 12) % 2], x, y);
+    });
   });
   // Pickups
   pickups.forEach(p => {
@@ -2178,19 +2243,19 @@ function drawWorld() {
     if (l.warn > 0) {
       const a = 0.35 + 0.5 * Math.abs(Math.sin(l.warn * 0.35));
       c.globalAlpha = a; c.fillStyle = hatch('#d0283c');
-      c.fillRect(l.x - l.w / 2, l.y0, l.w, H - l.y0);
+      c.fillRect(l.x - l.w / 2, l.y0, l.w, VH - l.y0);
       c.fillStyle = '#d0283c';
-      for (let yy = l.y0; yy < H; yy += 16) c.fillRect(l.x - 2, yy, 4, 8);
+      for (let yy = l.y0; yy < VH; yy += 16) c.fillRect(l.x - 2, yy, 4, 8);
       c.globalAlpha = 1;
     } else {
       c.fillStyle = '#d0283c';
-      c.fillRect(l.x - l.w / 2, l.y0, l.w, H - l.y0);
+      c.fillRect(l.x - l.w / 2, l.y0, l.w, VH - l.y0);
       c.fillStyle = hatch('#7a1e30');
-      c.fillRect(l.x - l.w / 2, l.y0, l.w, H - l.y0);
+      c.fillRect(l.x - l.w / 2, l.y0, l.w, VH - l.y0);
       c.fillStyle = '#ffd9a8';
-      c.fillRect(l.x - l.w / 6 + (tick % 2) * 2, l.y0, l.w / 3, H - l.y0);
+      c.fillRect(l.x - l.w / 6 + (tick % 2) * 2, l.y0, l.w / 3, VH - l.y0);
       c.fillStyle = GRAPHITE;
-      c.fillRect(l.x - l.w / 2 - 2, l.y0, 2, H - l.y0); c.fillRect(l.x + l.w / 2, l.y0, 2, H - l.y0);
+      c.fillRect(l.x - l.w / 2 - 2, l.y0, 2, VH - l.y0); c.fillRect(l.x + l.w / 2, l.y0, 2, VH - l.y0);
     }
   });
   // Enemies
@@ -2439,10 +2504,10 @@ function drawShop() {
     if (!b.perkId) return;
     const f = i === focus, k = PERKS[b.perkId], l = save.perks[b.perkId] || 0, maxed = l >= k.max, cost = k.cost(l), can = !maxed && save.pencils >= cost;
     pencilBox(b.x, b.y, b.w, b.h, f ? '#f2b01e' : can ? '#8fd18f' : '#a9a08a', f ? 60 + boil() : b.y, f);
-    T(k.name, b.x + 16, b.y + 22, 16, '#fff', 'left');
-    T(k.desc, b.x + 16, b.y + 48, 12, '#4a4438', 'left');
-    T(maxed ? 'MAXED' : cost + ' PENCILS', b.x + b.w - 16, b.y + 22, 14, maxed ? '#14703f' : can ? '#b8421c' : '#6b6456', 'right');
-    T('LV ' + l + '/' + k.max, b.x + b.w - 16, b.y + 48, 12, '#4a4438', 'right');
+    T(k.name, b.x + 16, b.y + 20, 16, '#fff', 'left');
+    T(k.desc, b.x + 16, b.y + 43, 12, '#4a4438', 'left');
+    T(maxed ? 'MAXED' : cost + ' PENCILS', b.x + b.w - 16, b.y + 20, 14, maxed ? '#14703f' : can ? '#b8421c' : '#6b6456', 'right');
+    T('LV ' + l + '/' + k.max, b.x + b.w - 16, b.y + 43, 12, '#4a4438', 'right');
   });
   drawButtons();
 }
