@@ -26,7 +26,7 @@
 
 /* ==================== Setup ==================== */
 const W = 640, H = 760, STEP = 1000 / 60;
-const VERSION = 'v1.0'; // bump this each time the game is published
+const VERSION = 'v1.1'; // bump this each time the game is published
 // The world grows in Endless. VW and VH are its size; the camera zooms out to fit it.
 let zoom = 1, VW = W, VH = H, PLAYER_Y = 670, BREACH_Y = 625, TOP = 46, BAR_Y = 560;
 const MIN_ZOOM = 0.6, MAX_VW = Math.ceil(W / MIN_ZOOM), MAX_VH = Math.ceil(H / MIN_ZOOM);
@@ -562,6 +562,8 @@ let particles = [], rings = [], floaters = [];
 let moth = null, mothT = 0;
 let form = null, banner = null, stageEnd = 0, fireT = 0;
 let shake = 0, flash = 0, flashColor = '#fff', freeze = 0, slow = 0;
+// Auto-fire is a phone/tablet option only: on a computer you fire with the mouse.
+const isTouch = () => usedTouch || matchMedia('(pointer: coarse)').matches;
 let shownScore = 0, usedTouch = false, summary = null, upgradeChoices = [], breachFlash = 0;
 let wrecks = [], flip = null, bannerNext = null, curMod = null, eraser = null, stageT = 0;
 let note = null, noteQueue = [];
@@ -1267,7 +1269,7 @@ function updatePlayer() {
   if (p.cd > 0) p.cd--;
   if (p.muzzle > 0) p.muzzle--;
   if (p.shieldT > 0) { p.shieldT--; if (p.shieldT <= 0 && stats.shieldCd) { p.shield = true; sfx('upgrade'); fxAdd.text(p.x, p.y - 34, 'SHIELD READY', '#8fb8ff'); fxAdd.ring(p.x, p.y, '#8fb8ff', 4, 18); } }
-  const firing = keys.Space || ptr.down || save.autofire;
+  const firing = keys.Space || ptr.down || (save.autofire && isTouch());
   if (firing && p.cd <= 0 && !stageEnd) {
     fire();
     p.cd = run.timers.rapid > 0 ? stats.cd * 0.55 : stats.cd;
@@ -1752,7 +1754,7 @@ function setMode(m) {
     list.forEach((b, i) => ui.push(btn(bx, 336 + i * 52, bw, 44, b[0], b[1])));
     if (!save.tutorialCleared && !save.endlessRun) focus = 1;
   } else if (m === 'options') {
-    col(210, [[toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], [toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')],
+    col(210, [[toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], ...(isTouch() ? [[toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')]] : []),
       [() => save.tutorialDone ? 'REPLAY TUTORIAL' : 'TUTORIAL: READY', () => { save.tutorialDone = false; save.notesSeen = {}; persist(); sfx('click'); }],
       ['RESET ALL PROGRESS', () => askConfirm('Erase everything?', 'Pencils, perks, best wave, achievements and your saved run.', resetProgress, 'options')], ['BACK', () => setMode('title')]]);
     uiBack = () => setMode('title');
@@ -1764,7 +1766,7 @@ function setMode(m) {
     if (!shipOpen(save.ship)) save.ship = 'lancer';
     Object.keys(COLORS).forEach((id, i) => ui.push(btn(44 + i * 70, 212, 60, 48, '', () => { save.tint = id; persist(); }, { tintId: id, enabled: id !== 'gold' || !!save.perks.goldpaint })));
     Object.keys(DIFFS).forEach((id, i) => ui.push(btn(40 + i * 190, 296, 180, 44, DIFFS[id].name.toUpperCase(), () => { save.difficulty = id; persist(); }, { sel: () => save.difficulty === id })));
-    ui.push(btn(180, 382, 280, 44, toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')));
+    if (isTouch()) ui.push(btn(180, 382, 280, 44, toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')));
     ui.push(btn(180, 436, 280, 54, 'START', beginEndless));
     ui.push(btn(180, 498, 280, 44, 'BACK', () => setMode('title')));
     focus = ui.length - 2;
@@ -1794,8 +1796,8 @@ function setMode(m) {
     col(210, list);
     uiBack = ui[0].onClick;
   } else if (m === 'settings') {
-    col(210, [[toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], [toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')], ['BACK', () => setMode('pause')]]);
-    focus = 4;
+    col(210, [[toggleLabel('MUSIC', 'music'), toggle('music')], [toggleLabel('SOUND FX', 'sfx'), toggle('sfx')], [toggleLabel('SCREEN SHAKE', 'shake'), toggle('shake')], ...(isTouch() ? [[toggleLabel('AUTO-FIRE', 'autofire'), toggle('autofire')]] : []), ['BACK', () => setMode('pause')]]);
+    focus = ui.length - 1;
     uiBack = () => setMode('pause');
   } else if (m === 'clear') {
     ui.push(btn(bx, 560, bw, 48, 'CONTINUE', afterClear));
