@@ -26,7 +26,7 @@
 
 /* ==================== Setup ==================== */
 const W = 640, H = 760, STEP = 1000 / 60;
-const VERSION = 'v1.1'; // bump this each time the game is published
+const VERSION = 'v1.3'; // bump this each time the game is published
 // The world grows in Endless. VW and VH are its size; the camera zooms out to fit it.
 let zoom = 1, VW = W, VH = H, PLAYER_Y = 670, BREACH_Y = 625, TOP = 46, BAR_Y = 560;
 const MIN_ZOOM = 0.6, MAX_VW = Math.ceil(W / MIN_ZOOM), MAX_VH = Math.ceil(H / MIN_ZOOM);
@@ -449,25 +449,39 @@ function pencilsFor(wave, prestige) {
   // One Golden Pencil per wave reached. Dying pays half; rank, difficulty and Golden Core scale it.
   return Math.max(1, Math.round(wave * (1 + save.prestiges * 0.1) * (prestige ? 1 : 0.5) * diff().score * (1 + (save.perks.goldcore || 0) * 0.15)));
 }
-const TUNE = { paceMob: 0.004, pacePlayer: 0.004, paceDmg: 0.018, lateBoss: 1, swarm: 2, stEarly: 0.3, stSlope: 0.07, earlyBoss: { 5: 0.6, 10: 0.35, 15: 0.3, 20: 0.2 }, bossSlow: 1.3, tierEvery: 15, ramp: 1.005, rampLate: 1.01, bossK: 0.015, early: 0.01 };
+const TUNE = { lateGrow: 1.011, mobGrow: 0.995, bossEase: 1.006, paceMob: 0.004, pacePlayer: 0.004, paceDmg: 0.018, lateBoss: 1, swarm: 2, stEarly: 0.3, stSlope: 0.07, earlyBoss: { 5: 0.6, 10: 0.35, 15: 0.3, 20: 0.2 }, bossSlow: 1.3, tierEvery: 15, ramp: 1.005, rampLate: 1.01, bossK: 0.015, early: 0.01 };
 // Pace: past wave 20, the swarm gets faster and the ship keeps up, so the climb speeds up
 // while the danger stays roughly level.
 const pastPace = () => run && run.endless ? Math.max(0, run.stage - 20) : 0;
-const mobPace = () => Math.min(1.5, 1 + pastPace() * TUNE.paceMob);
+// Past wave 120 the swarm keeps getting faster and fires more, so late waves get deadlier rather than longer.
+// Past wave 120 bosses get beefier (up to 4x by wave 270) so they stay a proper fight for strong ships.
+const lateBossHp = n => Math.min(4, 1 + Math.max(0, n - 120) / 50) / (n > 350 ? Math.pow(TUNE.bossEase, n - 350) : 1);
+// Normal enemies (not bosses) follow a gentler climb than bosses past 150, so late waves stay quick but deadly.
+const mobLate = () => run && run.endless && run.stage > 150 ? Math.pow(TUNE.mobGrow, run.stage - 150) : 1;
+const lateDanger = () => run && run.endless ? Math.max(0, run.stage - 120) : 0;
+const mobPace = () => Math.min(1.5 + lateDanger() * 0.004, 1 + pastPace() * TUNE.paceMob, 2.3);
 const shipPace = () => Math.min(1.5, 1 + pastPace() * TUNE.pacePlayer);
 const dmgPace = () => 1 + pastPace() * TUNE.paceDmg;
 // Enemy toughness follows how fast you clear waves, so a strong ship can't erase
 // a wave before it fights back. Each wave nudges it up or down.
-const powerScale = () => (run && run.endless && run.hpBoost) || 1;
+// Enemy toughness follows a fixed curve by wave, measured from a run with no shop perks.
+// It never rises to match you, so prestige perks make you genuinely stronger.
+const CURVE = [[20, 1], [30, 2.3], [40, 3.6], [50, 7], [60, 11], [70, 17], [80, 21], [90, 23], [100, 24], [110, 26], [120, 28], [150, 31]];
+function toughCurve(n) {
+  if (n <= 20) return 1;
+  for (let i = 1; i < CURVE.length; i++) if (n <= CURVE[i][0]) { const [a, va] = CURVE[i - 1], [b, vb] = CURVE[i]; return va + (vb - va) * (n - a) / (b - a); }
+  // Past 150 only well-upgraded ships are still going, so toughness climbs faster to build a wall around wave 500.
+  return CURVE[CURVE.length - 1][1] * Math.pow(TUNE.lateGrow, n - 150);
+}
+const powerScale = () => run && run.endless ? toughCurve(run.stage) * (run.ease || 1) : 1;
 // Bigger late armies: each enemy is a little weaker so the total fight stays fair.
 const armyThin = () => run && run.endless && run.stage > 60 ? 6 / (6 + Math.min(3, Math.floor((run.stage - 60) / 30))) : 1;
-const estimateBoost = n => n <= 20 ? 1 : Math.min(25, 1 + (n - 20) * 0.07);
+// If waves drag on much longer than planned, enemies soften a little; they recover once you're fast again (never above the curve).
 function adaptToPower(stage, sec) {
   if (!run.endless || stage <= 20 || stageDef(stage).boss) return;
-  // Target wave length grows into the late game: about 22s early, 30s mid, 40s from wave 100.
-  const target = stage < 60 ? 22 : stage < 100 ? 30 : 40, lo = target * 0.8, hi = target * 1.3;
-  const k = sec < lo * 0.4 ? 1.6 : sec < lo * 0.7 ? 1.3 : sec < lo ? 1.1 : sec > hi * 1.4 ? 0.82 : sec > hi ? 0.93 : 1;
-  run.hpBoost = clamp((run.hpBoost || 1) * k, 1, 400);
+  const target = stage < 60 ? 22 : stage < 100 ? 30 : 40;
+  const k = sec > target * 2.2 ? 0.8 : sec > target * 1.6 ? 0.9 : sec < target * 1.1 ? 1.08 : 1;
+  run.ease = clamp((run.ease || 1) * k, 0.4, 1);
 }
 const hpTier = n => 1 + Math.floor((n - 1) / TUNE.tierEvery);
 const endlessRamp = n => n <= 20 ? 1 : Math.pow(TUNE.ramp, n - 20) * (n > 100 ? Math.pow(TUNE.rampLate, n - 100) : 1);
@@ -541,7 +555,7 @@ const UPGRADES = {
   wingman:    { name: 'Wingman', icon: 'M', max: 3, desc: () => 'A small drone flies and fires beside you.' },
   hull:       { name: 'Hull Patch', icon: 'H', max: Infinity, desc: () => 'Repairs 2 lost lives. Only offered when damaged.' },
   aegis:      { name: 'Aegis Shield', icon: 'A', max: 5, desc: l => l === 0 ? 'Absorbs a hit. Recharges in 25s.' : 'Shield recharges faster.' },
-  novacell:   { name: 'Nova Cell', icon: 'N', max: Infinity, desc: () => '+1 nova capacity, and refills it.' },
+  novacell:   { name: 'Nova Cell', icon: 'N', max: 5, desc: () => '+1 nova capacity, and refills it.' },
   magnet:     { name: 'Tractor Beam', icon: 'B', max: 1, desc: () => 'Pulls pickups toward your ship.' },
   lucky:      { name: 'Scavenger', icon: 'L', max: 10, desc: () => 'Enemies drop pickups more often.' }
 };
@@ -667,7 +681,6 @@ function startStage(stage) {
   run.stage = stage;
   setWorld(run.endless ? clamp(1 - Math.max(0, stage - 25) * 0.0035, MIN_ZOOM, 1) : 1);
   checkWaveAwards(stage);
-  if (run.endless && stage > 20 && (run.hpBoost || 1) < estimateBoost(stage) * 0.5) run.hpBoost = estimateBoost(stage);
   recalcStats();
   const snap = JSON.parse(JSON.stringify(run));
   delete snap.timers;
@@ -694,7 +707,7 @@ function startStage(stage) {
   form = null;
   if (def.boss) {
     const d = BOSS_DEFS[def.boss];
-    const bossHp = Math.round(d.hp * diff().hp * (run.endless ? bossRamp(stage) * (TUNE.earlyBoss[stage] || 1) * (stage > 20 ? TUNE.lateBoss : 1) * powerScale() : 1));
+    const bossHp = Math.round(d.hp * diff().hp * (run.endless ? bossRamp(stage) * (TUNE.earlyBoss[stage] || 1) * (stage > 20 ? lateBossHp(stage) : 1) * powerScale() : 1));
     boss = { kind: d.kind, name: d.name, def: d, spr: d.spr, x: VW / 2, y: -80, ty: 170, w: d.spr.w, h: d.spr.h,
       hp: bossHp, maxHp: bossHp, dir: 1, speed: 1.3, t: 0, entering: true, dying: 0, flash: 0, hold: 0, phase: 1, spin: 0, nodes: [] };
     if (d.kind === 'warden') spawnNodes(10);
@@ -724,7 +737,7 @@ function startStage(stage) {
 const sectorOf = s => Math.floor((s - 1) / 5) % 4;
 function makeEnemy(t, o) {
   // Each sector toughens the swarm so it keeps pace with the ship's upgrades.
-  const d = TYPES[t], s = SPR[t][0], hp = Math.max(1, Math.round((t === 'm' ? 0.25 : 1) * d.hp * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) * earlyHp(run.stage) * (t === 'v' ? Math.sqrt(powerScale()) : powerScale()) * armyThin() : 1) * diff().hp));
+  const d = TYPES[t], s = SPR[t][0], hp = Math.max(1, Math.round((t === 'm' ? 0.25 : 1) * d.hp * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) * earlyHp(run.stage) * (t === 'v' ? Math.sqrt(powerScale()) : powerScale()) * armyThin() * mobLate() : 1) * diff().hp));
   return Object.assign({ type: t, hp, maxHp: hp, x: o.sx || 0, y: o.sy || 0, w: s.w, h: s.h, flash: 0, dead: false, cool: rand(120, 420), phase: Math.random() * TAU }, o);
 }
 
@@ -787,12 +800,16 @@ function useNova() {
   eBullets = [];
   lasers = [];
   const nm = stats.combos.supernova ? 2 : 1;
-  enemies.forEach(e => { if (!e.dead) damageEnemy(e, 4 * nm * hpTier(run.stage) * (run.endless ? endlessRamp(run.stage) : 1)); });
+  // Scaled to the enemies themselves: half of every enemy's health at any wave, enough to finish off
+  // anything already hurt. Two passes, so mini-bugs that splitters drop in the blast are caught too.
+  for (let pass = 0; pass < 2; pass++) enemies.slice().forEach(e => { if (!e.dead) damageEnemy(e, Math.max(e.maxHp * (e.type === 'm' ? 1.05 : 0.5), 4 * hpTier(run.stage)) * nm); });
   if (stats.combos.supernova) dropPickup(player.x, 300);
   if (moth) { moth.hp = 0; killMoth(); }
   if (boss && !boss.entering && !boss.dying) {
-    if (boss.nodes.length) boss.nodes.forEach(n => { n.hp -= 10; });
-    damageBoss((boss.nodes.length ? 12 : 40) * nm, false);
+    if (boss.nodes.length) boss.nodes.forEach(n => { n.hp -= n.maxHp * 0.4 * nm; });
+    // Each extra nova in the same boss fight does less, so novas can't replace shooting.
+    const fade = Math.pow(0.6, boss.novas || 0); boss.novas = (boss.novas || 0) + 1;
+    damageBoss(boss.maxHp * (boss.nodes.length ? 0.03 : 0.08) * nm * fade / (1 + Math.min(300, run.combo) * 0.01), false);
   }
 }
 /* Chasers and Darters that slip past your ship cost half a life. */
@@ -925,7 +942,7 @@ function killMoth() {
   fxAdd.burst(moth.x, moth.y, '#ffe066', 24, 5);
   sfx('kill');
   run.combo++; run.comboT = 170;
-  dropPickup(moth.x, moth.y, pick(['spread', 'rapid', 'lance', 'shield', 'nova']));
+  dropPickup(moth.x, moth.y, 'life'); // the golden moth always carries a spare life
   moth = null;
 }
 function spawnNodes(hp) {
@@ -934,8 +951,8 @@ function spawnNodes(hp) {
 function damageBoss(dmg, crit) {
   if (boss.entering || boss.dying) return;
   const shielded = boss.nodes.length > 0;
-  // During boss fights the combo is a damage multiplier: +1% per hit, up to +100%.
-  const comboX = 1 + Math.min(100, run.combo) * 0.01;
+  // During boss fights the combo is a damage multiplier: +1% per hit, up to +300%.
+  const comboX = 1 + Math.min(300, run.combo) * 0.01;
   const real = (shielded ? dmg * 0.25 : crit ? dmg * 2 : dmg) * comboX;
   boss.hp -= real; boss.flash = 3;
   run.combo++; run.comboT = 170;
@@ -1075,11 +1092,16 @@ function updateBoss() {
       if (every(260)) addLaser(rand(40, VW - 40), TOP, 50, 90, 24, player.x > VW / 2 ? 2 : -2);
     }
   }
+  // The longer your combo, the angrier the boss: faster, wider, quicker volleys. Getting hit resets it.
+  // Early bosses can only get so angry, so weaker ships aren't swamped; by wave 240 the full rage is unlocked.
+  const rage = Math.min(300, 60 + run.stage, run.combo);
+  if (rage >= 30 && every(Math.max(34, Math.round(120 - rage * 0.29)))) fan(b.x, b.y + b.h / 2, 3 + Math.floor(rage / 60), 0.5 + rage / 500, 2.6 + rage / 140, '#ff5a3c');
   // Every 20 waves the bosses come back with something extra.
   const loop = run.endless ? Math.floor((run.stage - 1) / 20) : 0;
-  if (loop >= 1 && every(Math.max(240, 460 - loop * 40)) && enemies.filter(e => e.state === 'gnat').length < 60) spawnGnatCloud(b.x, b.y + b.h / 2, 6 + loop * 3);
-  if (loop >= 2 && every(330)) addLaser(clamp(player.x, 20, VW - 20), TOP, 60, 40, 26);
-  if (loop >= 3 && every(290)) ringShot(b.x, b.y, 14 + Math.min(10, loop * 2), 2.4, '#d59bff', b.t * 0.05);
+  if (loop >= 1 && every(Math.max(240, 460 - loop * 40)) && enemies.filter(e => e.state === 'gnat').length < 60) spawnGnatCloud(b.x, b.y + b.h / 2, Math.min(24, 6 + loop * 3));
+  // The Hive Heart already has its own lasers and rings, so it skips these two extras.
+  if (loop >= 2 && b.kind !== 'heart' && every(330)) addLaser(clamp(player.x, 20, VW - 20), TOP, 60, 40, 26);
+  if (loop >= 3 && b.kind !== 'heart' && every(290)) ringShot(b.x, b.y, 14 + Math.min(10, loop * 2), 2.4, '#d59bff', b.t * 0.05);
 }
 function spawnGnatCloud(x, y, n) {
   const ghp = Math.max(1, Math.round(hpTier(run.stage) * endlessRamp(run.stage) * 0.2 * Math.sqrt(powerScale()) * diff().hp));
@@ -1095,7 +1117,7 @@ function spawnGnatCloud(x, y, n) {
 function updateEnemies() {
   const def = stageDef(run.stage);
   // Shots speed up slowly, reaching full intensity around wave 150.
-  const st = run.endless ? Math.min(48, run.stage <= 20 ? run.stage * TUNE.stEarly : 20 * TUNE.stEarly + (run.stage - 20) * TUNE.stSlope) : run.stage;
+  const st = run.endless ? Math.min(75, run.stage <= 20 ? run.stage * TUNE.stEarly : 20 * TUNE.stEarly + (run.stage - 20) * TUNE.stSlope + lateDanger() * 0.05) : run.stage;
   if (tick % 16 === 0 && enemies.some(e => e.sketch && e.state === 'enter' && e.t >= 0)) sfx('scribble');
   let alive = 0, minX = 1e9, maxX = -1e9;
   enemies.forEach(e => {
@@ -1122,7 +1144,7 @@ function updateEnemies() {
   if (!def.boss && !stageEnd && !player.dead) {
     fireT--;
     if (fireT <= 0) {
-      fireT = Math.max(run.stage > 150 ? 8 : 13, 62 - st * 2.3) * rand(0.6, 1.4) * diff().fire / mobPace() * armyThin();
+      fireT = Math.max(run.stage > 150 ? Math.max(4, 8 - lateDanger() * 0.012) : 13, 62 - st * 2.3) * rand(0.6, 1.4) * diff().fire / mobPace() * armyThin();
       const low = {};
       const candidates = [];
       enemies.forEach(e => {
@@ -1402,7 +1424,7 @@ function updateAutos() {
       });
     }
   }
-  if (s.reactor && due('reactor', Math.max(600, 2100 - s.reactor * 350)) && run.nova < run.novaMax + 1) { run.nova++; fxAdd.text(p.x, p.y - 34, '+1 NOVA', '#d59bff', 14); }
+  if (s.reactor && due('reactor', Math.max(1500, 2400 - s.reactor * 150)) && run.nova < run.novaMax + 1) { run.nova++; fxAdd.text(p.x, p.y - 34, '+1 NOVA', '#d59bff', 14); }
   if (s.medic && due('medic', Math.max(2400, 3400 - s.medic * 250)) && run.lives < run.maxLives) { run.lives++; sfx('pickup'); fxAdd.text(p.x, p.y - 40, 'REPAIRED +1', '#7dff9a', 14); }
 }
 function updatePlayerBullets() {
@@ -2520,7 +2542,7 @@ function drawHUD() {
   // Chain
   if (boss && run.combo > 1) {
     const col = run.combo >= 50 ? '#d61f6b' : run.combo >= 20 ? '#b8421c' : GRAPHITE;
-    T('COMBO ' + run.combo + '  +' + Math.min(100, run.combo) + '% DAMAGE', W / 2, 46 + 15, 13, col);
+    T('COMBO ' + run.combo + '  +' + Math.min(300, run.combo) + '% DAMAGE' + (run.combo >= 30 ? '  BOSS RAGING' : ''), W / 2, 46 + 15, 13, col);
     c.fillStyle = 'rgba(43,38,32,.2)'; c.fillRect(W / 2 - 60, 46 + 25, 120, 4);
     c.fillStyle = col; c.fillRect(W / 2 - 60, 46 + 25, 120 * run.comboT / 170, 4);
   }
