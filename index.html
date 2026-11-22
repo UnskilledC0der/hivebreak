@@ -26,7 +26,7 @@
 
 /* ==================== Setup ==================== */
 const W = 640, H = 760, STEP = 1000 / 60;
-const VERSION = 'v1.3'; // bump this each time the game is published
+const VERSION = 'v1.4'; // bump this each time the game is published
 // The world grows in Endless. VW and VH are its size; the camera zooms out to fit it.
 let zoom = 1, VW = W, VH = H, PLAYER_Y = 670, BREACH_Y = 625, TOP = 46, BAR_Y = 560;
 const MIN_ZOOM = 0.6, MAX_VW = Math.ceil(W / MIN_ZOOM), MAX_VH = Math.ceil(H / MIN_ZOOM);
@@ -406,8 +406,16 @@ const SECTORS = [
   { name: 'Teal Expanse', neb: '#2aa6a0', neb2: '#5f9fd6', line: '#0b6f6a' },
   { name: 'Ember Reach', neb: '#e8791a', neb2: '#e2a23c', line: '#b8421c' },
   { name: 'Violet Deep', neb: '#8a47d1', neb2: '#c26fb8', line: '#56239e' },
-  { name: 'Heart of the Hive', neb: '#d61f6b', neb2: '#8a2f6f', line: '#a3124f' }
+  { name: 'Heart of the Hive', neb: '#d61f6b', neb2: '#8a2f6f', line: '#a3124f' },
+  { name: 'Moss Hollow', neb: '#5a9e3a', neb2: '#a3b83c', line: '#2f6b1f' },
+  { name: 'Ink Night', neb: '#3a4fb8', neb2: '#6d5fc9', line: '#22307a' },
+  { name: 'Golden Hour', neb: '#e2a51c', neb2: '#e86b4a', line: '#9a5b0c' },
+  { name: 'Storm Slate', neb: '#5c7a92', neb2: '#8aa7b8', line: '#2f4a5e' },
+  { name: 'Dusk Rose', neb: '#c95a8a', neb2: '#e89a6a', line: '#8a2f55' },
+  { name: 'Mint Frost', neb: '#3fb8a0', neb2: '#8fd0e0', line: '#16705f' }
 ];
+// A new colour set every 5 waves (each boss starts a fresh page), cycling through all ten.
+const paletteOf = s => Math.floor((s - 1) / 5) % SECTORS.length;
 const MODS = {
   torn: { name: 'TORN PAGE', desc: 'Shots are lost in the rip' },
   dark: { name: 'DARK PAGE', desc: 'Only the page near your ship is lit' },
@@ -500,7 +508,23 @@ const COMBOS = [
   { id: 'supernova', name: 'Supernova', req: ['novacell', 'overcharge'], desc: 'Nova hits twice as hard and drops loot' },
   { id: 'salvage', name: 'Salvage', req: ['magnet', 'lucky'], desc: 'Power-ups last much longer' }
 ];
-const WAVE_NAMES = ['Another Page', 'Fresh Ink', 'Margin Raid', 'Dog-Eared', 'Scribble Swarm', 'Smudged', 'Bleed Through', 'Graphite Storm', 'Wobbly Lines', 'Blank Stare'];
+/* Wave names describe what's coming: the main bugs, how many rows, and any extras. */
+function describeWave(rows, n) {
+  const count = {}, cells = rows.join('');
+  for (const ch of cells) if (ch !== '.') count[ch] = (count[ch] || 0) + 1;
+  const total = Object.values(count).reduce((a, b) => a + b, 0) || 1;
+  const kinds = Object.keys(count).filter(k => k !== 'h').sort((a, b) => count[b] - count[a]);
+  const nm = k => TYPES[k] ? TYPES[k].name : 'Bug';
+  const fill = total / Math.max(1, cells.length);
+  const r = rows.length;
+  const group = fill < 0.55 ? (r <= 2 ? 'Scatter' : 'Skirmish') : r <= 2 ? 'Patrol' : r === 3 ? 'Line' : r === 4 ? 'Wall' : r <= 6 ? 'Horde' : 'Legion';
+  let name;
+  if (kinds.length >= 4 && count[kinds[0]] / total < 0.4) name = nm(kinds[0]) + '-led ' + group;
+  else if (kinds[1] && count[kinds[1]] / total >= 0.3) name = nm(kinds[0]) + ' & ' + nm(kinds[1]) + ' ' + group;
+  else name = nm(kinds[0] || 'd') + ' ' + group;
+  if (count.h) name += ' with Menders';
+  return name;
+}
 let endlessCache = {};
 /* Endless waves are generated once per run, so a retry of the frame stays stable. */
 function endlessDef(n) {
@@ -527,10 +551,11 @@ function endlessDef(n) {
       }
       rows.push(row);
     }
-    def = { name: pick(WAVE_NAMES), rows };
+    def = { rows };
     // Half the time, reuse one of the hand-built formations from the old campaign.
     const built = STAGES.filter((d, k) => d && d.rows && k <= n + 2);
     if (Math.random() < 0.5 && built.length && cols <= 11) def.rows = pick(built).rows;
+    def.name = describeWave(def.rows, n);
     if (n >= 6 && Math.random() < 0.3) def.mod = pick(Object.keys(MODS));
   }
   return (endlessCache[n] = def);
@@ -726,7 +751,7 @@ function startStage(stage) {
       i++;
     }));
     const m = curMod && MODS[curMod], bt = m ? 170 : 110;
-    banner = { text: stageLabel(stage), sub: m ? m.name + ': ' + m.desc : def.name, t: bt, color: m ? '#b8421c' : SECTORS[sectorOf(stage)].line, max: bt };
+    banner = { text: stageLabel(stage), sub: m ? m.name + ': ' + m.desc : def.name, t: bt, color: m ? '#b8421c' : SECTORS[paletteOf(stage)].line, max: bt };
   }
   if (run.endless) {
     const news = { 20: 'Zapper Antenna unlocked', 30: 'Gnat swarms join the attack', 45: 'Auto Turret unlocked', 60: 'Chain Lightning unlocked', 80: 'Orbit Blades unlocked', 100: 'Nova Reactor unlocked. The swarm thickens', 120: 'Repair Bot unlocked', 150: 'The swarm is at full strength', 200: 'It never ends' };
@@ -2159,6 +2184,8 @@ for (let i = 0; i < 55; i++) {
 const bgCache = {};
 function background(sec) {
   if (bgCache[sec]) return bgCache[sec];
+  const kept = Object.keys(bgCache);
+  if (kept.length >= 5) delete bgCache[kept.find(k => +k > 3) || kept[0]]; // pages are big, so only keep a few
   const s = SECTORS[sec], o = document.createElement('canvas'), Q = 2;
   o.width = W * Q; o.height = H * Q;
   const x = o.getContext('2d');
@@ -2362,7 +2389,7 @@ for (let hp = 1; hp <= 3; hp++) for (let v = 0; v < 4; v++) {
   BARRIER_IMG[hp].push(o);
 }
 function drawWorld() {
-  const sec = sectorOf(run.stage);
+  const sec = paletteOf(run.stage);
   drawBackground(sec, mode === 'play' && stageEnd ? 3 : 1);
   c.save();
   if (shake > 0) c.translate(Math.round((Math.random() - 0.5) * shake), Math.round((Math.random() - 0.5) * shake));
@@ -2532,7 +2559,7 @@ function drawHUD() {
   c.fillStyle = GRAPHITE; c.fillRect(0, TOP, W, 2);
   T('SCORE', 14, 12, 10, '#6b6456', 'left');
   T(String(Math.round(shownScore)).padStart(5, '0'), 14, 30, 18, '#fff', 'left');
-  T(run.endless ? 'WAVE ' + run.stage : 'TUTORIAL ' + run.stage + '/' + TUTORIAL_LEN, W / 2, 13, 12, SECTORS[sectorOf(run.stage)].line);
+  T(run.endless ? 'WAVE ' + run.stage : 'TUTORIAL ' + run.stage + '/' + TUTORIAL_LEN, W / 2, 13, 12, SECTORS[paletteOf(run.stage)].line);
   T(stageDef(run.stage).name, W / 2, 32, 12, '#fff');
   T('HIGH', 588, 12, 10, '#6b6456', 'right');
   T(String(Math.max(save.hiEndless, run.endless ? run.score : 0)).padStart(5, '0'), 588, 30, 15, '#b8421c', 'right');
